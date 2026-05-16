@@ -1,0 +1,93 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+body {
+  background-color: #020617;
+  color: #e2e8f0;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+}
+
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  z-index: -1;
+  pointer-events: none;
+}
+
+.blob-1 {
+  width: 400px;
+  height: 400px;
+  background: #3b82f6;
+  opacity: 0.15;
+  top: -100px;
+  left: -100px;
+}
+
+.blob-2 {
+  width: 500px;
+  height: 500px;
+  background: #8b5cf6;
+  opacity: 0.1;
+  bottom: -150px;
+  right: -50px;
+}
+
+.blob-3 {
+  width: 300px;
+  height: 300px;
+  background: #ec4899;
+  opacity: 0.1;
+  top: 200px;
+  right: 200px;
+}
+
+/* --- THEMES --- */
+
+/* Ghost in the Machine */
+.theme-ghost {
+  filter: grayscale(1) contrast(1.2) brightness(0.9);
+}
+.theme-ghost * {
+  font-family: "JetBrains Mono", monospace !important;
+  border-radius: 0 !important;
+}
+.scanline-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.15) 50%, rgba(0,0,0,0.15));
+  background-size: 100% 4px;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.8;
+}
+
+/* Bio-Organic Swarm */
+.theme-bio {
+  background-color: #021a11 !important; /* Deep organic green background */
+}
+.theme-bio .blob-1 { background: #10b981; opacity: 0.2; animation: bio-pulse 8s ease-in-out infinite alternate; }
+.theme-bio .blob-2 { background: #059669; opacity: 0.15; animation: bio-pulse 10s ease-in-out infinite alternate-reverse; }
+.theme-bio .blob-3 { background: #34d399; opacity: 0.15; animation: bio-pulse 12s ease-in-out infinite alternate; }
+
+.theme-bio .glass, .theme-bio input, .theme-bio select, .theme-bio button, .theme-bio .rounded-xl, .theme-bio .rounded-lg, .theme-bio .rounded-2xl {
+  border-radius: 24px !important;
+}
+
+@keyframes bio-pulse {
+  0% { transform: scale(1) translate(0, 0); border-radius: 40% 60% 70% 30% / 40% 50% 60% 50%; }
+  50% { transform: scale(1.2) translate(50px, -20px); border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%; }
+  100% { transform: scale(0.9) translate(-30px, 40px); border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%; }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Orchestra - Multi-Agent Framework",
+  "description": "A framework for building and running autonomous multi-agent conversations and workflows.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
