@@ -52,15 +52,42 @@ export class Sanitizer {
         // Universal entropy-based long string check (e.g. hex/base64 secrets)
         scrubbed = scrubbed.replace(/[a-zA-Z0-9/+]{32,}/g, (match) => {
             // Only redact if it looks like high-entropy data (random-ish)
-            // This is a naive check to avoid redacting long legitimate words
             const hasNumbers = /[0-9]/.test(match);
             const hasSpecial = /[+/]/.test(match);
-            if (match.length > 40 || (hasNumbers && match.length > 32) || hasSpecial) {
+            const hasMixedCase = /[a-z]/.test(match) && /[A-Z]/.test(match);
+            
+            if (match.length > 40 || (hasNumbers && hasMixedCase && match.length > 32) || hasSpecial) {
                 return '[REDACTED_SECRET_DATA]';
             }
             return match;
         });
 
         return scrubbed;
+    }
+
+    /**
+     * Detects potential prompt injection attempts in untrusted text.
+     */
+    public static detectInjection(text: string): { isInjected: boolean; reason?: string } {
+        if (!text) return { isInjected: false };
+
+        const lowerText = text.toLowerCase();
+        
+        // Common injection triggers
+        const patterns = [
+            { id: 'SYS_OVERRIDE', regex: /ignore (all )?previous (instructions|directives)/i },
+            { id: 'ROLE_SPOOF', regex: /you are now (a|the|my) (admin|root|superuser)/i },
+            { id: 'OUTPUT_HIJACK', regex: /output exactly the following/i },
+            { id: 'ESCAPE_GUARD', regex: /end of untrusted content/i },
+            { id: 'REASONING_LEAK', regex: /show your (internal )?reasoning/i }
+        ];
+
+        for (const pattern of patterns) {
+            if (pattern.regex.test(lowerText)) {
+                return { isInjected: true, reason: `Detected potential injection pattern: ${pattern.id}` };
+            }
+        }
+
+        return { isInjected: false };
     }
 }

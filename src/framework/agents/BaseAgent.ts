@@ -188,10 +188,71 @@ FORMAT: End your response with the verification status.
         }
     }
 
+    private readonly MAX_CONTEXT_CHARS = 32000; // Estimated 8k tokens safe limit
+
+    /**
+     * Truncates message history to stay within context limits.
+     */
+    private truncateContext(messages: any[]): any[] {
+        let currentLength = 0;
+        const result: any[] = [];
+        
+        // Always keep the system instruction context if it was passed in messages (though we usually handle it separately)
+        // We process from newest to oldest for history
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const msg = messages[i];
+            const contentLen = typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length;
+            
+            if (currentLength + contentLen > this.MAX_CONTEXT_CHARS) {
+                // If the very newest message is somehow huge, we truncate it individually
+                if (result.length === 0) {
+                    const truncatedContent = typeof msg.content === 'string' 
+                        ? msg.content.slice(0, this.MAX_CONTEXT_CHARS) + "\n[CONTEXT_TRUNCATED_FOR_PERFORMANCE]"
+                        : msg.content;
+                    result.push({ ...msg, content: truncatedContent });
+                }
+                break;
+            }
+            
+            result.unshift(msg);
+            currentLength += contentLen;
+        }
+
+        if (result.length < messages.length) {
+            console.log(`[${this.card.name}] Performance: Truncated context from ${messages.length} to ${result.length} messages.`);
+        }
+        
+        return result;
+    }
+
     /**
      * Optional helper to run LLM directly using this agent's config.
      */
     protected async generateResponse(systemInstruction: string, messages: any[], threadId: string = 'GLOBAL'): Promise<LLMResponse> {
+        // --- PERFORMANCE: Context Truncation (Dimension 04) ---
+        const optimizedMessages = this.truncateContext(messages);
+        
+        // --- SECURITY: Pre-flight Injection Guard (Dimension 10) ---
+        const lastMessage = optimizedMessages[optimizedMessages.length - 1];
+        if (lastMessage && typeof lastMessage.content === 'string') {
+            const injectionCheck = Sanitizer.detectInjection(lastMessage.content);
+            if (injectionCheck.isInjected) {
+                console.warn(`[SECURITY_ALERT] Potential prompt injection detected in agent ${this.card.name}! Quarantining request...`);
+                globalEventStore.append({
+                    type: 'SYSTEM_HOOK',
+                    sourceAgentId: this.card.id,
+                    threadId,
+                    payload: { 
+                        action: 'PROMPT_INJECTION_DETECTED', 
+                        reason: injectionCheck.reason,
+                        textSnippet: lastMessage.content.slice(0, 50) + '...'
+                    }
+                });
+                // We don't crash, but we wrap the content even more strictly
+                lastMessage.content = `[QUARANTINED_POTENTIAL_INJECTION]: ${lastMessage.content}`;
+            }
+        }
+
         const coreMem = this.memory.getCoreMemory(this.card.id);
         
         const coreMemBlock = `
@@ -451,6 +512,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
     }
 
     protected async generateStructuredResponse(systemInstruction: string, messages: any[], schema: any, threadId: string = 'GLOBAL'): Promise<LLMResponse<any>> {
+        const optimizedMessages = this.truncateContext(messages);
         const coreMem = this.memory.getCoreMemory(this.card.id);
         
         const coreMemBlock = `
@@ -462,10 +524,10 @@ Human Context:
 ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
 `;
 
-        const wisdom = await this.consultWisdom(messages[messages.length - 1]?.content || '');
+        const wisdom = await this.consultWisdom(optimizedMessages[optimizedMessages.length - 1]?.content || '');
         const enhancedSystemInstruction = `${systemInstruction}${coreMemBlock}\n${Sanitizer.wrapSterile(wisdom, 'LEARNED_WISDOM')}`;
 
-        const modifier = await globalPluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, messages, threadId);
+        const modifier = await globalPluginRegistry.emitBeforeLLMCall(this.card.id, this.llmConfig, optimizedMessages, threadId);
         await globalPluginRegistry.emitOnLLMCall(this.card.id, modifier.messages, threadId);
         
         const result = await this.circuitBreaker.execute(async () => {

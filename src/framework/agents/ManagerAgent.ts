@@ -192,10 +192,14 @@ Reply with 'OK' if sufficient. Otherwise, describe specifically what is missing 
         this.subordinates = this.subordinates.filter(s => !s.card.name.startsWith('Temp'));
 
         const synthesisMessages: any[] = [
-            { role: 'user', content: `Task: ${JSON.stringify(task)}\nSubordinate Results:\n${context}` }
+            { 
+                role: 'user', 
+                content: `Task: ${JSON.stringify(task)}\nSubordinate Results:\n<UNTRUSTED_CONTENT>\n${context}\n</UNTRUSTED_CONTENT>` 
+            }
         ];
 
-        const synthesis = await this.generateResponse(
+        // Use adversarial reasoning for final synthesis to catch contradictions
+        const synthesis = await this.executeWithReasoning(
             `You are a Manager. Synthesize the subordinate results into a final answer. 
             CRITICAL: If you detect numeric conflicts or major logical contradictions between subordinates, you MUST explicitly flag them using 'CONFLICT: [Description]' instead of averaging or blurring them.`, 
             synthesisMessages, 

@@ -1,7 +1,6 @@
 import { BaseAgent } from '../agents/BaseAgent.ts';
 import { AgentFrameworkError } from '../core/ErrorHandler.ts';
 import { globalEventStore } from '../core/EventStore.ts';
-import { WBFTConsensus } from '../consensus/WBFT.ts';
 import { WorkflowSuspendedError } from './WorkflowSuspendedError.ts';
 import { globalStateStore } from './StateStore.ts';
 import { globalEscalationManager } from '../governance/EscalationManager.ts';
@@ -10,8 +9,21 @@ import { globalPluginRegistry } from '../core/PluginRegistry.ts';
 import { globalCircuitBreaker } from '../resilience/CircuitBreaker.ts';
 import { globalCheckpointer } from './Checkpointer.ts';
 import { globalQueueBroker } from './QueueBroker.ts';
+import { globalWorkerPool } from '../core/WorkerPool.ts';
+import { globalPolicyEngine } from '../governance/PolicyEngine.ts';
+import { globalAuditLog } from '../governance/AuditLog.ts';
 import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
 import { Sanitizer } from '../security/Sanitizer.ts';
+import { ParadigmStrategy } from './paradigms/ParadigmStrategy.ts';
+import { HierarchicalStrategy } from './paradigms/HierarchicalStrategy.ts';
+import { ConsensusStrategy } from './paradigms/ConsensusStrategy.ts';
+import { SwarmStrategy } from './paradigms/SwarmStrategy.ts';
+import { MapReduceStrategy } from './paradigms/MapReduceStrategy.ts';
+import { MOAStrategy } from './paradigms/MOAStrategy.ts';
+import { GraphStrategy } from './paradigms/GraphStrategy.ts';
+import { EventDrivenStrategy } from './paradigms/EventDrivenStrategy.ts';
+import { DecentralizedSwarmStrategy } from './paradigms/DecentralizedSwarmStrategy.ts';
+import { DebateStrategy } from './paradigms/DebateStrategy.ts';
 
 export type Paradigm = 'GRAPH' | 'HIERARCHICAL' | 'CONSENSUS' | 'EVENT_DRIVEN' | 'SWARM' | 'DECENTRALIZED_SWARM' | 'MAP_REDUCE' | 'DEBATE' | 'MOA';
 
@@ -31,11 +43,23 @@ export interface WorkflowConfig {
  * Combines graph-based reliability with role-based ease of use.
  */
 export class Orchestrator {
-    private wbft = new WBFTConsensus();
     private reflectionQueue: string[] = [];
     private activeReflections = 0;
     private readonly MAX_CONCURRENT_REFLECTIONS = 5;
     private readonly MAX_REFLECTION_QUEUE_SIZE = 100;
+    private paradigmRegistry: Map<Paradigm, ParadigmStrategy> = new Map();
+
+    constructor() {
+        this.paradigmRegistry.set('HIERARCHICAL', new HierarchicalStrategy());
+        this.paradigmRegistry.set('CONSENSUS', new ConsensusStrategy());
+        this.paradigmRegistry.set('SWARM', new SwarmStrategy());
+        this.paradigmRegistry.set('MAP_REDUCE', new MapReduceStrategy());
+        this.paradigmRegistry.set('MOA', new MOAStrategy());
+        this.paradigmRegistry.set('GRAPH', new GraphStrategy());
+        this.paradigmRegistry.set('EVENT_DRIVEN', new EventDrivenStrategy());
+        this.paradigmRegistry.set('DECENTRALIZED_SWARM', new DecentralizedSwarmStrategy());
+        this.paradigmRegistry.set('DEBATE', new DebateStrategy());
+    }
 
     private async queueReflection(threadId: string, agents: BaseAgent[]) {
         if (this.reflectionQueue.length >= this.MAX_REFLECTION_QUEUE_SIZE) {
@@ -110,6 +134,10 @@ export class Orchestrator {
         if (!config.blackboard) config.blackboard = {};
         config.blackboard._useDistributedQueue = config.useDistributedQueue === true;
 
+        const workflowSpanId = `workflow_${threadId}_${Date.now()}`;
+        TelemetrySystem.startSpan(workflowSpanId);
+        const workflowSpan = TelemetrySystem.getActiveSpan(workflowSpanId);
+
         const maxRetries = config.maxRetries ?? 1;
         let attempt = 0;
         let result;
@@ -119,47 +147,29 @@ export class Orchestrator {
 
         while (attempt <= maxRetries) {
             try {
-                switch (config.paradigm) {
-                    case 'HIERARCHICAL':
-                        result = await this.runHierarchical(task, sortedAgents, threadId, config.blackboard);
-                        break;
-                    case 'CONSENSUS':
-                        result = await this.runConsensus(task, sortedAgents, threadId, config.blackboard);
-                        break;
-                    case 'GRAPH':
-                        result = await this.runGraph(task, config, threadId);
-                        break;
-                    case 'EVENT_DRIVEN':
-                        result = await this.runEventDriven(task, config, threadId);
-                        break;
-                    case 'SWARM':
-                        result = await this.runSwarm(task, sortedAgents, threadId, config.blackboard);
-                        break;
-                    case 'DECENTRALIZED_SWARM':
-                        result = await this.runDecentralizedSwarm(task, sortedAgents, threadId, config.blackboard, config.maxIterations);
-                        break;
-                    case 'DEBATE':
-                        result = await this.runDebate(task, sortedAgents, threadId, config.maxIterations, config.blackboard);
-                        break;
-                    case 'MAP_REDUCE':
-                        result = await this.runMapReduce(task, sortedAgents, threadId, config.blackboard);
-                        break;
-                    case 'MOA':
-                        result = await this.runMOA(task, sortedAgents, threadId, config.blackboard);
-                        break;
-                    default:
-                        throw new Error(`Paradigm ${config.paradigm} not implemented yet`);
+                const strategy = this.paradigmRegistry.get(config.paradigm);
+                if (strategy) {
+                    result = await strategy.run(task, sortedAgents, {
+                        threadId,
+                        blackboard: config.blackboard,
+                        executeAgentTask: (agent, task, tid, bb, ps) => this.executeAgentTask(agent, task, tid, config.paradigm, bb, ps || workflowSpan),
+                        parentSpan: workflowSpan
+                    }, config);
+                } else {
+                    throw new Error(`Paradigm ${config.paradigm} not implemented or registered`);
                 }
                 // If it succeeds, break out of retry loop
                 break;
             } catch (error: any) {
                 if (error instanceof WorkflowSuspendedError || error.name === 'WorkflowSuspendedError') {
+                    TelemetrySystem.endSpan(workflowSpanId); // Suspend ends the current span
                     // Serialize state here
                     const stateToSave = {
                         threadId,
                         approvalId: error.approvalId,
                         task,
-                        config: { paradigm: config.paradigm }, // Save minimum viable config
+                        config: { paradigm: config.paradigm }, 
+                        blackboard: config.blackboard,
                         history: globalEventStore.getLogs().filter(e => e.threadId === threadId),
                         agentDefinitions: config.agents.map(a => ({
                             name: a.card.name,
@@ -204,6 +214,8 @@ export class Orchestrator {
                         }
                     });
 
+                    TelemetrySystem.endSpan(workflowSpanId, finalErr);
+                    
                     // Trigger Autonomous Self-Reflection (Dimension 07)
                     // We reflect on why the workflow exhausted its retries
                     this.queueReflection(threadId, config.agents);
@@ -222,6 +234,8 @@ export class Orchestrator {
                 await new Promise(resolve => setTimeout(resolve, backoffDelay));
             }
         }
+
+        TelemetrySystem.endSpan(workflowSpanId);
 
         globalEventStore.append({
             type: 'WORKFLOW_COMPLETED',
@@ -310,12 +324,13 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
             throw new Error(`Cannot resume: No suspended workflow found for approval ID ${approvalId}`);
         }
 
-        // Apply human feedback to the escalation manager to unlock any pending state 
-        // (If we fully shut down the process, EscalationManager also needs this to hydrate, or we pass it back inside the agent's memory)
-        globalEscalationManager.resolveApproval(approvalId, resolution, feedback);
-        
+        if (resolution === 'REJECTED') {
+            await globalStateStore.deleteState(approvalId);
+            return { status: 'TERMINATED', reason: 'Rejected by human' };
+        }
+
+        await globalEscalationManager.resolveApproval(approvalId, resolution, feedback);
         await globalStateStore.deleteState(approvalId);
-        
         await globalPluginRegistry.emitOnWorkflowResume(state.threadId, state);
         
         globalEventStore.append({
@@ -325,421 +340,24 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
             payload: { action: 'WORKFLOW_RESUMED', approvalId, resolution }
         });
 
-        // For this naive demo, we just restart the workflow with the previous context + human feedback added as new task prepended
-        // A true Temporal-like engine would rehydrate the exact call stack line
-        const resumedTask = `[RESUMED AFTER HUMAN INTERVENTION: ${resolution}. Feedback: ${feedback}]\nOriginal Task:\n${state.task}`;
+        // Reconstruct the task based on feedback
+        let resumedTask = state.task;
+        if (feedback) {
+            resumedTask = `[HUMAN FEEDBACK INJECTED]\nResolution: ${resolution}\nFeedback: ${feedback}\n\nOriginal Task Context:\n${state.task}`;
+        }
         
         const resumedConfig: WorkflowConfig = {
             paradigm: state.config.paradigm,
-            agents: agents || [], // Passed in on hydration
-            maxRetries: 1
+            agents: agents || [], 
+            maxRetries: 1,
+            blackboard: state.blackboard
         };
 
         return this.executeWorkflow(resumedTask, resumedConfig, state.threadId);
     }
     
-    private async runHierarchical(task: any, agents: BaseAgent[], threadId: string, blackboard: Record<string, any>) {
-        // Find Manager
-        const manager = agents.find(a => a.card.role === 'MANAGER');
-        if (!manager) throw new Error("Hierarchical paradigm requires a MANAGER agent.");
-
-        // Execute task via Manager (which delegates to WORKERs internally)
-        return await this.executeAgentTask(manager, task, threadId, blackboard);
-    }
-
-    private async runConsensus(task: any, agents: BaseAgent[], threadId: string, blackboard: Record<string, any>) {
-        // Using WBFT to achieve robust agreement over hallucination
-        const validVoters = agents.filter(a => a.card.role === 'CRITIC' || a.card.role === 'WORKER');
-        
-        if (validVoters.length === 0) throw new Error("Consensus paradigm requires at least one WORKER or CRITIC agent.");
-
-        let consensusResult: string | null = null;
-        try {
-            consensusResult = await this.wbft.reachConsensus(task, validVoters, threadId);
-        } catch (err: any) {
-            console.warn(`[Orchestrator] WBFT Consensus failed: ${err.message}`);
-        }
-        
-        // Enhance: If consensus fails (e.g. total disagreement), escalate to Manager/Judge
-        if (!consensusResult) {
-            const judge = agents.find(a => a.card.role === 'MANAGER' || a.card.role === 'JUDGE');
-            if (judge) {
-                const adjudicationPrompt = `The agent swarm failed to reach consensus on the following task: "${task}".\n\nIndividual agent outputs were inconsistent. Please review the findings and provide a definitive strategic resolution.`;
-                const finalAnswer = await this.executeAgentTask(judge, adjudicationPrompt, threadId, blackboard);
-                return { 
-                    consensusReached: false, 
-                    wasAdjudicated: true,
-                    finalAnswer 
-                };
-            }
-        }
-        
-        return { 
-            consensusReached: true, 
-            finalAnswer: consensusResult 
-        };
-    }
-
-    private async runGraph(task: any, config: WorkflowConfig, threadId: string) {
-        if (!config.edges) throw new Error("Edges must be defined for GRAPH paradigm.");
-        const blackboard = config.blackboard || {};
-        
-        let currentState = task;
-        const executionPlan = config.edges;
-        let executed = new Set<string>();
-        let currentAgentId: string | null = executionPlan.length > 0 ? executionPlan[0].from : null;
-        
-        // Hydrate from checkpointer if possible
-        const checkpoint = await globalCheckpointer.getLatestCheckpoint(threadId);
-        if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('graph_step_')) {
-            currentState = checkpoint.state.currentState;
-            checkpoint.state.executed.forEach((ex: string) => executed.add(ex));
-            currentAgentId = checkpoint.state.currentAgentId;
-            const cleanBlackboard = JSON.parse(JSON.stringify(checkpoint.state.blackboard || {}));
-            Object.assign(blackboard, cleanBlackboard);
-            console.log(`[Checkpointer] Resuming GRAPH at agent: ${currentAgentId}`);
-        }
-        
-        const agentMap = new Map(config.agents.map(a => [a.card.id, a]));
-        
-        while (currentAgentId) {
-            const agent = agentMap.get(currentAgentId);
-            if (agent && !executed.has(currentAgentId)) {
-                currentState = await this.executeAgentTask(agent, currentState, threadId, blackboard);
-                executed.add(currentAgentId);
-                
-                const nextEdge = executionPlan.find(e => e.from === currentAgentId);
-                const nextAgentId = nextEdge ? nextEdge.to : null;
-
-                // Checkpoint loop step
-                await globalCheckpointer.saveCheckpoint(threadId, `graph_step_${currentAgentId}`, {
-                    currentState,
-                    executed: Array.from(executed),
-                    currentAgentId: nextAgentId,
-                    blackboard
-                });
-                
-                currentAgentId = nextAgentId;
-            } else {
-                // Find next node
-                const nextEdge = executionPlan.find(e => e.from === currentAgentId);
-                currentAgentId = nextEdge ? nextEdge.to : null;
-            }
-            
-            if (currentAgentId && executed.has(currentAgentId)) {
-                break; // avoid basic loops in this naive implementation
-            }
-        }
-        
-        return { graphCompleted: true, finalState: currentState };
-    }
-
-    private async runEventDriven(task: any, config: WorkflowConfig, threadId: string) {
-        if (!config.events) throw new Error("Events configuration required for EVENT_DRIVEN.");
-        const blackboard = config.blackboard || {};
-        const agentMap = new Map(config.agents.map(a => [a.card.id, a]));
-        
-        let resultState = task;
-        
-        // Simulating an event loop for maxIterations
-        const startEvent = 'START_EVENT';
-        let eventQueue: string[] = [startEvent];
-        const iterations = config.maxIterations || 5;
-        let currentIteration = 0;
-
-        // Hydrate from checkpointer if possible
-        const checkpoint = await globalCheckpointer.getLatestCheckpoint(threadId);
-        if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('event_step_')) {
-            resultState = checkpoint.state.resultState;
-            eventQueue = checkpoint.state.eventQueue;
-            currentIteration = checkpoint.state.currentIteration;
-            const cleanBlackboard = JSON.parse(JSON.stringify(checkpoint.state.blackboard || {}));
-            Object.assign(blackboard, cleanBlackboard);
-            console.log(`[Checkpointer] Resuming EVENT_DRIVEN at iteration: ${currentIteration}`);
-        }
-        
-        for (let i = currentIteration; i < iterations && eventQueue.length > 0; i++) {
-            const currentEvent = eventQueue.shift()!;
-            const listeners = config.events[currentEvent] || [];
-            
-            // Enforce priority ordering for event listeners
-            const prioritizedListeners = config.agents
-                .filter(a => listeners.includes(a.card.id))
-                .map(a => a.card.id);
-            
-            for (const agentId of prioritizedListeners) {
-                const agent = agentMap.get(agentId);
-                if (agent) {
-                    const response = await this.executeAgentTask(agent, `Handle event ${currentEvent} given state: ${resultState}`, threadId, blackboard);
-                    resultState = `${resultState}\n[${agentId} response]: ${response}`;
-                    
-                    // Naively extract any emitted events from the response
-                    if (response.includes('EMIT_FINISH')) {
-                        return { status: 'success', finalState: resultState };
-                    } else if (response.includes('EMIT_NEXT')) {
-                        eventQueue.push('NEXT_EVENT');
-                    }
-                }
-            }
-
-            // Checkpoint state
-            await globalCheckpointer.saveCheckpoint(threadId, `event_step_${i}`, {
-                resultState,
-                eventQueue,
-                currentIteration: i + 1,
-                blackboard
-            });
-        }
-        
-        return { status: 'completed_or_max_iterations', finalState: resultState };
-    }
-
-    private async runSwarm(task: any, agents: BaseAgent[], threadId: string, blackboard: Record<string, any>) {
-        // Run all WORKER agents concurrently on the same task
-        const workers = agents.filter(a => a.card.role === 'WORKER');
-        if (workers.length === 0) throw new Error("SWARM requires at least one WORKER agent");
-
-        const promises = workers.map(worker => this.executeAgentTask(worker, task, threadId, blackboard).then(res => ({
-            agentId: worker.card.id,
-            result: res
-        })).catch(err => ({
-            agentId: worker.card.id,
-            error: err.message
-        })));
-
-        const results = await Promise.all(promises);
-        
-        // Find a MANAGER if present, to synthesize the swarm results
-        const manager = agents.find(a => a.card.role === 'MANAGER');
-        if (manager) {
-            const summaryTask = `Swarm agents produced the following results:\n${JSON.stringify(results, null, 2)}\n\nPlease synthesize them into a final answer for: ${task}`;
-            const finalResult = await this.executeAgentTask(manager, summaryTask, threadId, blackboard);
-            return { rawSwarmResults: results, synthesized: finalResult };
-        }
-
-        return { rawSwarmResults: results };
-    }
-
-    /**
-     * Decentralized SWARM: Agents autonomously collaborate via the blackboard.
-     * No central manager; the collective intelligence reaches stabilization.
-     */
-    private async runDecentralizedSwarm(task: any, agents: BaseAgent[], threadId: string, blackboard: Record<string, any>, maxIterations = 5) {
-        let currentStatus = 'Active';
-        let iterations = 0;
-        
-        // Hydrate from checkpointer if possible
-        const checkpoint = await globalCheckpointer.getLatestCheckpoint(threadId);
-        if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('swarm_step_')) {
-            currentStatus = checkpoint.state.currentStatus;
-            iterations = checkpoint.state.iterations;
-            const cleanBlackboard = JSON.parse(JSON.stringify(checkpoint.state.blackboard || {}));
-            Object.assign(blackboard, cleanBlackboard);
-            console.log(`[Checkpointer] Resuming DECENTRALIZED_SWARM at iteration: ${iterations}`);
-        } else {
-            // Initialize blackboard with task if empty
-            if (!blackboard.objective) blackboard.objective = task;
-            if (!blackboard.contributions) blackboard.contributions = [];
-        }
-
-        while (currentStatus === 'Active' && iterations < maxIterations) {
-            iterations++;
-            
-            // In a decentralized swarm, agents are often triggered by state changes or specialized for sub-tasks.
-            // For this implementation, we allow all agents to check the blackboard and contribute if they see value.
-            for (const agent of agents) {
-                const swarmPrompt = `
-[DECENTRALIZED_SWARM_MODE]
-Objective: ${blackboard.objective}
-Current Collective State: ${JSON.stringify(blackboard.contributions.slice(-3))}
-
-Agent ${agent.card.name}, evaluate the current state.
-1. If you can improve the solution or add a new dimension, provide your contribution.
-2. If the solution is complete and optimal, return EXACTLY "SIGNAL_STABILIZATION".
-3. If you have nothing more to add but others might, return "NO_CHANGE".
-`;
-                const response = await this.executeAgentTask(agent, swarmPrompt, threadId, blackboard);
-                
-                if (response === 'SIGNAL_STABILIZATION') {
-                    currentStatus = 'Stabilized';
-                    break;
-                }
-                
-                if (response !== 'NO_CHANGE') {
-                    blackboard.contributions.push({
-                        agentId: agent.card.id,
-                        agentName: agent.card.name,
-                        contribution: response,
-                        timestamp: Date.now()
-                    });
-                }
-            }
-            
-            await globalCheckpointer.saveCheckpoint(threadId, `swarm_step_${iterations}`, {
-                currentStatus,
-                iterations,
-                blackboard: JSON.parse(JSON.stringify(blackboard)) // Deep copy snapshot
-            });
-            
-            globalEventStore.append({
-                type: 'SYSTEM_HOOK',
-                sourceAgentId: 'ORCHESTRATOR',
-                threadId,
-                payload: { 
-                    action: 'SWARM_ITERATION_COMPLETE', 
-                    iteration: iterations, 
-                    status: currentStatus,
-                    blackboard: JSON.parse(JSON.stringify(blackboard)) // Deep copy snapshot
-                }
-            });
-        }
-
-        return {
-            status: currentStatus,
-            iterations,
-            finalSolution: blackboard.contributions
-        };
-    }
-
-    private async runDebate(task: any, agents: BaseAgent[], threadId: string, maxIterations?: number, blackboard?: Record<string, any>) {
-        if (agents.length < 2) throw new Error("DEBATE requires at least two agents.");
-        const debateRounds = maxIterations || 2;
-        let context = `Topic for Debate: ${task}\n\n`;
-        
-        for (let i = 0; i < debateRounds; i++) {
-            context += `--- Round ${i + 1} ---\n`;
-            for (const agent of agents) {
-                // Ensure the agent is an active participant
-                if (agent.card.role === 'MANAGER' || agent.card.role === 'JUDGE') continue;
-                
-                const debatePrompt = `${context}\n\nAgent ${agent.card.name}, based on the discussion above, present your argument or critique previous statements. Format your response clearly.`;
-                let response = await this.executeAgentTask(agent, debatePrompt, threadId, blackboard);
-                if (typeof response === 'object' && response.text) response = response.text;
-                
-                context += `[${agent.card.name}]: ${response}\n\n`;
-            }
-        }
-        
-        // Find a MANAGER or JUDGE to synthesize the debate
-        const judge = agents.find(a => a.card.role === 'MANAGER' || a.card.role === 'JUDGE');
-        if (judge) {
-            const summaryTask = `The following debate occurred:\n${context}\n\nPlease analyze the arguments and provide a final concluded verdict.`;
-            let finalVerdict = await this.executeAgentTask(judge, summaryTask, threadId, blackboard);
-            return {
-                debateTranscript: context,
-                finalVerdict
-            };
-        }
-        
-        return {
-            debateTranscript: context,
-            finalVerdict: "No judge assigned to provide final verdict."
-        };
-    }
-
-    private async runMapReduce(task: any, agents: BaseAgent[], threadId: string, blackboard: Record<string, any>) {
-        const planner = agents.find(a => a.card.role === 'PLANNER');
-        if (!planner) throw new Error("MAP_REDUCE requires a PLANNER agent");
-
-        const workers = agents.filter(a => a.card.role === 'WORKER');
-        if (workers.length === 0) throw new Error("MAP_REDUCE requires at least one WORKER agent");
-
-        // 1. Plan Phase
-        const dag = await this.executeAgentTask(planner, task, threadId, blackboard);
-        
-        if (!dag || !dag.subtasks || !Array.isArray(dag.subtasks)) {
-            throw new Error(`Invalid DAG structure returned by PLANNER`);
-        }
-
-        // 2. Map Phase (Fan-out)
-        const subtasks = dag.subtasks;
-        const taskResults = new Map<string, any>();
-        
-        // Very basic DAG runner (naively loops until all tasks are done or deadlocks)
-        let pending = [...subtasks];
-        
-        while (pending.length > 0) {
-            // Find tasks whose dependencies are met
-            const readyTasks = pending.filter(st => 
-                !st.dependencies || st.dependencies.every((dep: string) => taskResults.has(dep))
-            );
-
-            if (readyTasks.length === 0) {
-                throw new Error("Deadlock detected in Planner DAG dependencies.");
-            }
-
-            // Execute ready tasks in parallel
-            const promises = readyTasks.map(async (st) => {
-                // Select a worker
-                const worker = workers[Math.floor(Math.random() * workers.length)];
-                
-                // Embed context from dependencies
-                let context = '';
-                if (st.dependencies && st.dependencies.length > 0) {
-                    context = '\nContext from dependencies:\n' + st.dependencies.map((dep: string) => `[${dep}]: ${JSON.stringify(taskResults.get(dep))}`).join('\n');
-                }
-                
-                const execTask = `${st.description}${context}`;
-                const result = await this.executeAgentTask(worker, execTask, threadId, blackboard);
-                return { id: st.id, result };
-            });
-
-            const completed = await Promise.all(promises);
-            for (const { id, result } of completed) {
-                taskResults.set(id, result);
-            }
-
-            // Remove completed tasks from pending
-            pending = pending.filter(st => !completed.find(c => c.id === st.id));
-        }
-
-        // 3. Reduce Phase
-        const manager = agents.find(a => a.card.role === 'MANAGER') || planner;
-        
-        const reduceTask = `Objective: ${task}\n\nMap Results:\n${Array.from(taskResults.entries()).map(([id, res]) => `[Task ${id}]: ${JSON.stringify(res)}`).join('\n')}\n\nPlease synthesize the final answer.`;
-        
-        const finalAnswer = await this.executeAgentTask(manager, reduceTask, threadId, blackboard);
-        
-        return {
-            plan: dag,
-            mapResults: Object.fromEntries(taskResults),
-            finalAnswer
-        };
-    }
-
-    private async runMOA(task: any, agents: BaseAgent[], threadId: string, blackboard?: Record<string, any>): Promise<any> {
-        console.log(`[ORCHESTRATOR] Initializing MOA (Mixture of Agents) for thread: ${threadId}`);
-        
-        // 1. Layer 1: Parallel Generation
-        const layer1Agents = agents.filter(a => a.card.role !== 'MANAGER');
-        if (layer1Agents.length === 0) throw new Error("MOA requires at least one non-MANAGER agent for Layer 1");
-
-        const layer1Promises = layer1Agents.map(async (a) => {
-            try {
-                const result = await this.executeAgentTask(a, task, threadId, blackboard);
-                return { name: a.card.name, status: 'SUCCESS', result };
-            } catch (err: any) {
-                console.warn(`[MOA] Expert ${a.card.name} failed: ${err.message}`);
-                return { name: a.card.name, status: 'FAILED', error: err.message };
-            }
-        });
-
-        const layer1Results = await Promise.all(layer1Promises);
-
-        // 2. Layer 2: Synthesis (Manager)
-        const manager = agents.find(a => a.card.role === 'MANAGER') || agents[0];
-        const synthesisPrompt = `
-Objective: ${task}
-Combined Agent Intelligence (Layer 1):
-${layer1Results.map((res) => `[Agent ${res.name}]: ${res.status === 'SUCCESS' ? JSON.stringify(res.result) : `CRITICAL_FAILURE: ${res.error}`}`).join('\n\n')}
-
-Task: Synthesize, distill, and improve upon the Layer 1 outputs to produce the single most optimal response. 
-IMPORTANT: If an agent failed (CRITICAL_FAILURE), do not ignore it. Acknowledge the gap in intelligence and provide a safe, conservative recommendation for that specific area.
-`;
-        return this.executeAgentTask(manager, synthesisPrompt, threadId, blackboard);
-    }
-
-    private async executeAgentTask(agent: BaseAgent, task: any, threadId: string, blackboard?: Record<string, any>): Promise<any> {
+    private async executeAgentTask(agent: BaseAgent, task: any, threadId: string, paradigm: string, blackboard?: Record<string, any>, parentSpan?: any): Promise<any> {
+        const spanId = `agent_exec_${agent.card.id}_${Date.now()}`;
         // --- RELIABILITY: CYCLE DETECTION ---
         const chain = this.activeDependencyChains.get(threadId) || [];
         
@@ -820,6 +438,16 @@ IMPORTANT: If an agent failed (CRITICAL_FAILURE), do not ignore it. Acknowledge 
             }
 
             try {
+                TelemetrySystem.startSpan(spanId, parentSpan);
+
+                // --- GOVERNANCE: Policy Check (Dimension 05) ---
+                const policyResult = globalPolicyEngine.evaluate(currentTask, agent.card.id, threadId);
+                if (policyResult.status === 'RED') {
+                    throw new Error(`Execution Blocked by Policy Engine: ${policyResult.violations.join(', ')}`);
+                }
+                
+                await globalAuditLog.log(threadId, agent.card.id, 'AGENT_EXECUTION_START', `Agent ${agent.card.name} started task execution under paradigm ${paradigm}`);
+
                 try {
                     currentTask = await globalPluginRegistry.emitBeforeAgentExecute(agent.card.id, currentTask, threadId);
                 } catch (e: any) {
@@ -847,13 +475,16 @@ IMPORTANT: If an agent failed (CRITICAL_FAILURE), do not ignore it. Acknowledge 
                 // --- RELIABILITY: TIMEOUT WRAPPER ---
                 let result = await globalCircuitBreaker.execute(async () => {
                     return await runWithContext(contextConfig, async () => {
-                        return await agent.execute(currentTask, threadId);
+                        // --- PERFORMANCE: WorkerPool Concurrency Lock (Dimension 06) ---
+                        return await globalWorkerPool.run(async () => {
+                            return await agent.execute(currentTask, threadId);
+                        }, agent.card.id, threadId);
                     });
                 }, undefined, this.MAX_SILENCE_TIMEOUT_MS);
                 
                 result = await globalPluginRegistry.emitAfterAgentExecute(agent.card.id, currentTask, result, threadId);
                 
-                const duration = Date.now() - startTime;
+                const duration = TelemetrySystem.endSpan(spanId);
                 globalEventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: agent.card.id,
@@ -864,7 +495,7 @@ IMPORTANT: If an agent failed (CRITICAL_FAILURE), do not ignore it. Acknowledge 
                 await this.consolidateAgentLearning(agent, currentTask, result, null, threadId);
                 return result;
             } catch (error: any) {
-                const duration = Date.now() - startTime;
+                const duration = TelemetrySystem.endSpan(spanId, error);
                 globalEventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: agent.card.id,

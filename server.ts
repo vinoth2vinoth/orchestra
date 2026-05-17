@@ -22,7 +22,11 @@ import { globalEscalationManager } from './src/framework/governance/EscalationMa
 import { globalPluginRegistry, AgenticPlugin } from './src/framework/core/PluginRegistry.js';
 import './src/framework/tools/ExternalTools.js';
 import './src/framework/tools/ProjectBoardTool.js';
+import { registerHumanHelpTool } from './src/framework/tools/HumanHelpTool.js';
 import { MCPClient } from './src/framework/tools/MCPClient.js';
+
+// Register HITL tool
+registerHumanHelpTool();
 
 import { registerEnterpriseFeatures, MetricsExportPlugin } from './src/framework/plugins/EnterpriseFeatures.js';
 import { globalStateStore } from './src/framework/orchestration/StateStore.js';
@@ -30,7 +34,7 @@ import { CriticAgent } from './src/framework/agents/CriticAgent.js';
 import { PlannerAgent } from './src/framework/agents/PlannerAgent.js';
 import { ProviderRegistry } from './src/framework/llm/ProviderRegistry.js';
 import { GoogleGenAI } from '@google/genai';
-import { globalWorkerPool } from './src/framework/WorkerPool.js';
+import { globalWorkerCluster } from './src/framework/orchestration/WorkerCluster.js';
 import { AutonomousDaemon } from './src/framework/orchestration/AutonomousDaemon.js';
 
 // Bootstrap Enterprise Features (DLP, Token Budget, Semantic Cache, Audit, Metrics)
@@ -49,7 +53,7 @@ async function startServer() {
   const globalMemory = new MemoryMesh();
   
   // Initialize Distributed Workers
-  globalWorkerPool.init(3);
+  globalWorkerCluster.init(3);
 
   // Initialize Autonomous Daemon
   const daemon = new AutonomousDaemon(10000); // Poll every 10s

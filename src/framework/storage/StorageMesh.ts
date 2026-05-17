@@ -296,6 +296,36 @@ export class StorageMesh {
         }
         return results;
     }
+
+    /**
+     * Appends content to a file.
+     */
+    public async appendFile(relativePath: string, content: string | Buffer): Promise<void> {
+        this.activeWrites.add(relativePath);
+        try {
+            const safePath = this.getSafePath(relativePath);
+            
+            // 1. Read existing or use empty
+            let existingContent: Buffer | string = '';
+            const manifestEntry = this.fileManifest.get(relativePath);
+            if (manifestEntry) {
+                existingContent = manifestEntry.content;
+            } else if (this.strategy === 'LOCAL' && fs.existsSync(safePath)) {
+                existingContent = await fs.promises.readFile(safePath);
+            }
+
+            // 2. Combine
+            const newContent = Buffer.concat([
+                typeof existingContent === 'string' ? Buffer.from(existingContent) : existingContent,
+                typeof content === 'string' ? Buffer.from(content) : content
+            ]);
+
+            // 3. Authorized write
+            await this.writeFile(relativePath, newContent);
+        } finally {
+            this.activeWrites.delete(relativePath);
+        }
+    }
 }
 
 export const globalStorageMesh = new StorageMesh('./orchestra_workspace');

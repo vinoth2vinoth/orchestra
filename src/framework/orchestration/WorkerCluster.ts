@@ -1,7 +1,7 @@
-import { WorkerNode } from './orchestration/WorkerNode.ts';
-import { globalMessageBus } from './core/MessageBus.ts';
+import { WorkerNode } from './WorkerNode.ts';
+import { globalMessageBus } from '../core/MessageBus.ts';
 
-export class WorkerPool {
+export class WorkerCluster {
     private workers: WorkerNode[] = [];
     private nodeLastHeartbeat: Map<string, number> = new Map();
     private activeTaskByNode: Map<string, string | null> = new Map();
@@ -14,7 +14,7 @@ export class WorkerPool {
         for (let i = 0; i < count; i++) {
             this.spawnWorker(`node_${i + 1}`);
         }
-        console.log(`[WorkerPool] Initialized ${count} distributed worker simulated nodes.`);
+        console.log(`[WorkerCluster] Initialized ${count} distributed worker simulated nodes.`);
         this.isInitialized = true;
         
         // Listen to heartbeats
@@ -42,13 +42,13 @@ export class WorkerPool {
             const lastHb = this.nodeLastHeartbeat.get(nodeId) || now;
             
             if (now - lastHb > 8000) { // 8 seconds without heartbeat
-                console.warn(`[WorkerPool] Detected unresponsive worker: ${nodeId}. Restarting...`);
+                console.warn(`[WorkerCluster] Detected unresponsive worker: ${nodeId}. Restarting...`);
                 
                 // Re-enqueue task if one was active
                 const activeTaskId = this.activeTaskByNode.get(nodeId);
                 if (activeTaskId) {
-                    console.error(`[WorkerPool] Worker ${nodeId} hung on task ${activeTaskId}. Node will be restarted.`);
-                    import('./orchestration/QueueBroker.ts').then(({ globalQueueBroker }) => {
+                    console.error(`[WorkerCluster] Worker ${nodeId} hung on task ${activeTaskId}. Node will be restarted.`);
+                    import('./QueueBroker.ts').then(({ globalQueueBroker }) => {
                         // The broker's orphan cleanup will eventually error out the task.
                         // Or we could explicitly orphan it here. For simplicity we let QueueBroker timeout handle it.
                     }).catch(console.error);
@@ -70,4 +70,4 @@ export class WorkerPool {
     public getWorkers() { return this.workers; }
 }
 
-export const globalWorkerPool = new WorkerPool();
+export const globalWorkerCluster = new WorkerCluster();

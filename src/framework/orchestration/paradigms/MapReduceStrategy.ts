@@ -1,0 +1,75 @@
+import { BaseAgent } from '../../agents/BaseAgent.ts';
+import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
+import { globalCheckpointer } from '../Checkpointer.ts';
+import { WorkflowConfig } from '../Orchestrator.ts';
+
+/**
+ * MapReduce Paradigm: Planner splits task, workers execute subtasks, manager synthesizes.
+ */
+export class MapReduceStrategy extends ParadigmStrategy {
+    async run(task: any, agents: BaseAgent[], context: ParadigmContext, config?: WorkflowConfig) {
+        const planner = agents.find(a => a.card.role === 'PLANNER');
+        if (!planner) throw new Error("MAP_REDUCE requires a PLANNER agent");
+
+        const workers = agents.filter(a => a.card.role === 'WORKER');
+        if (workers.length === 0) throw new Error("MAP_REDUCE requires at least one WORKER agent");
+
+        // 1. Plan Phase
+        const dag = await context.executeAgentTask(planner, task, context.threadId, context.blackboard);
+        if (!dag || !dag.subtasks || !Array.isArray(dag.subtasks)) {
+            throw new Error(`Invalid DAG structure returned by PLANNER`);
+        }
+
+        // 2. Map Phase (Fan-out)
+        const subtasks = dag.subtasks;
+        const taskResults = new Map<string, any>();
+        
+        const checkpoint = await globalCheckpointer.getLatestCheckpoint(context.threadId);
+        if (checkpoint && checkpoint.stepId === 'map_reduce_map_complete') {
+            Object.entries(checkpoint.state.taskResults).forEach(([id, res]) => taskResults.set(id, res));
+            console.log(`[Checkpointer] Resuming MAP_REDUCE after Map phase.`);
+        } else {
+            let pending = [...subtasks];
+            while (pending.length > 0) {
+                const readyTasks = pending.filter(st => 
+                    !st.dependencies || st.dependencies.every((dep: string) => taskResults.has(dep))
+                );
+
+                if (readyTasks.length === 0) throw new Error("Deadlock detected in Planner DAG dependencies.");
+
+                const promises = readyTasks.map(async (st) => {
+                    const worker = workers[Math.floor(Math.random() * workers.length)];
+                    let stContext = '';
+                    if (st.dependencies && st.dependencies.length > 0) {
+                        stContext = '\nContext from dependencies:\n' + st.dependencies.map((dep: string) => `[${dep}]: ${JSON.stringify(taskResults.get(dep))}`).join('\n');
+                    }
+                    const execTask = `${st.description}${stContext}`;
+                    const result = await context.executeAgentTask(worker, execTask, context.threadId, context.blackboard);
+                    return { id: st.id, result };
+                });
+
+                const completed = await Promise.all(promises);
+                for (const { id, result } of completed) {
+                    taskResults.set(id, result);
+                }
+                pending = pending.filter(st => !completed.find(c => c.id === st.id));
+            }
+            await globalCheckpointer.saveCheckpoint(context.threadId, 'map_reduce_map_complete', { 
+                taskResults: Object.fromEntries(taskResults), 
+                blackboard: context.blackboard 
+            });
+        }
+
+        // 3. Reduce Phase
+        const manager = agents.find(a => a.card.role === 'MANAGER') || planner;
+        const reduceTask = `Objective: ${task}\n\nMap Results:\n${Array.from(taskResults.entries()).map(([id, res]) => `[Task ${id}]: ${JSON.stringify(res)}`).join('\n')}\n\nPlease synthesize the final answer.`;
+        
+        const finalAnswer = await context.executeAgentTask(manager, reduceTask, context.threadId, context.blackboard);
+        
+        return {
+            plan: dag,
+            mapResults: Object.fromEntries(taskResults),
+            finalAnswer
+        };
+    }
+}

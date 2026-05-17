@@ -1,6 +1,7 @@
 import { FrameworkEvent } from './types.ts';
 import { globalMessageBus } from './MessageBus.ts';
 import { globalStateAdapter } from './StateAdapter.ts';
+import { Sanitizer } from '../security/Sanitizer.ts';
 
 /**
  * EventStore manages the append-only event log for the entire system.
@@ -49,11 +50,19 @@ export class EventStore {
         if (!this.threadIndex.has(event.threadId)) {
             this.threadIndex.set(event.threadId, []);
         }
-        this.threadIndex.get(event.threadId)!.push(event);
+        const threadTail = this.threadIndex.get(event.threadId)!;
+        threadTail.push(event);
+
+        // --- PERFORMANCE: Per-thread Tail Limit (Dimension 04) ---
+        // Keep only last 100 events per thread in memory for active context
+        if (threadTail.length > 100) {
+            this.threadIndex.set(event.threadId, threadTail.slice(-100));
+        }
         
-        // Pruning (Keep memory usage bounded)
-        if (this.events.length > 50000) {
-            this.events = this.events.slice(-25000);
+        // --- PERFORMANCE: Global Tail Limit (Dimension 04) ---
+        // Keep only latest 1000 events in memory overall
+        if (this.events.length > 1000) {
+            this.events = this.events.slice(-500);
             this.rebuildIndexes();
         }
 
@@ -62,8 +71,12 @@ export class EventStore {
     }
 
     public append(event: Omit<FrameworkEvent, 'id' | 'timestamp'>): FrameworkEvent {
+        // --- SECURITY: Log Scrubbing (Dimension 10) ---
+        const sanitizedPayload = this.recursiveScrub(event.payload || {});
+        
         const fullEvent: FrameworkEvent = {
             ...event,
+            payload: sanitizedPayload,
             id: crypto.randomUUID(),
             timestamp: Date.now()
         };
@@ -94,6 +107,20 @@ export class EventStore {
     public getSnapshotAtTimestamp(threadId: string, timestamp: number): FrameworkEvent[] {
         const threadEvents = this.threadIndex.get(threadId) || [];
         return threadEvents.filter(e => e.timestamp <= timestamp);
+    }
+
+    private recursiveScrub(obj: any): any {
+        if (!obj) return obj;
+        if (typeof obj === 'string') return Sanitizer.scrubSecrets(obj);
+        if (Array.isArray(obj)) return obj.map(item => this.recursiveScrub(item));
+        if (typeof obj === 'object') {
+            const scrubbed: any = {};
+            for (const key in obj) {
+                scrubbed[key] = this.recursiveScrub(obj[key]);
+            }
+            return scrubbed;
+        }
+        return obj;
     }
 
     private rebuildIndexes() {
