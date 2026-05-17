@@ -96,7 +96,7 @@ export function CommandPalette({ open, setOpen, actions }: CommandPaletteProps) 
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-start justify-center pt-[15vh]"
+                    className="fixed inset-0 z-[200] bg-slate-950/60 backdrop-blur-sm flex items-start justify-center pt-[15vh]"
                     onClick={() => setOpen(false)}
                 >
                     <motion.div 
@@ -119,7 +119,7 @@ export function CommandPalette({ open, setOpen, actions }: CommandPaletteProps) 
                                 spellCheck={false}
                             />
                             <div className="flex items-center gap-1">
-                                <span className="text-[10px] font-bold text-slate-500 bg-black/40 border border-white/10 px-1.5 py-0.5 rounded shadow-sm">ESC</span>
+                                <span className="text-[10px] font-bold text-slate-500 bg-slate-900 border border-slate-800 px-1.5 py-0.5 rounded shadow-sm">ESC</span>
                             </div>
                         </div>
 
@@ -167,7 +167,7 @@ export function CommandPalette({ open, setOpen, actions }: CommandPaletteProps) 
                                                                     "text-[10px] font-bold transition-colors px-1.5 py-0.5 rounded border shadow-sm",
                                                                     isSelected 
                                                                         ? "text-blue-300 bg-blue-500/20 border-blue-500/30" 
-                                                                        : "text-slate-500 bg-black/40 border-white/10"
+                                                                        : "text-slate-500 bg-slate-950 border-slate-800"
                                                                 )}>
                                                                     {key}
                                                                 </span>

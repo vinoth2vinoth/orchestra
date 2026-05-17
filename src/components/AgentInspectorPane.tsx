@@ -44,9 +44,9 @@ export function AgentInspectorPane({ agentId, onClose }: AgentInspectorProps) {
                 animate={{ x: 0, opacity: 1 }}
                 exit={{ x: 400, opacity: 0 }}
                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-                className="fixed right-0 top-0 bottom-0 w-[400px] z-[100] glass border-l border-white/10 shadow-2xl flex flex-col"
+                className="fixed right-0 top-0 bottom-0 w-[400px] z-[100] bg-slate-900 border-l border-slate-800 shadow-2xl flex flex-col"
             >
-                <div className="flex justify-between items-center p-4 border-b border-white/10 glass-header">
+                <div className="flex justify-between items-center p-4 border-b border-slate-800 bg-slate-950">
                     <div className="flex items-center gap-2">
                         <Brain className="w-5 h-5 text-indigo-400" />
                         <div>
@@ -55,10 +55,10 @@ export function AgentInspectorPane({ agentId, onClose }: AgentInspectorProps) {
                         </div>
                     </div>
                     <div className="flex items-center gap-2">
-                         <button onClick={fetchState} className="p-1.5 text-slate-400 hover:text-white transition-colors bg-white/5 rounded-md hover:bg-white/10">
+                         <button onClick={fetchState} className="p-1.5 text-slate-400 hover:text-slate-200 transition-colors bg-slate-800 rounded-md hover:bg-slate-700">
                             <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
                         </button>
-                        <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-white transition-colors bg-white/5 rounded-md hover:bg-white/10">
+                        <button onClick={onClose} className="p-1.5 text-slate-400 hover:text-slate-200 transition-colors bg-slate-800 rounded-md hover:bg-slate-700">
                             <X className="w-4 h-4" />
                         </button>
                     </div>
@@ -81,11 +81,11 @@ export function AgentInspectorPane({ agentId, onClose }: AgentInspectorProps) {
                                         Core Memory (MemGPT Hybrid)
                                     </h3>
                                     <div className="space-y-2">
-                                        <div className="bg-[#0f111a] border border-white/5 rounded-lg p-3">
+                                        <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
                                             <span className="text-[9px] uppercase font-mono text-purple-400 mb-2 block font-bold">Persona Block</span>
                                             <p className="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">{state.coreMemory.persona}</p>
                                         </div>
-                                        <div className="bg-[#0f111a] border border-white/5 rounded-lg p-3">
+                                        <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
                                             <span className="text-[9px] uppercase font-mono text-teal-400 mb-2 block font-bold">Human Block</span>
                                             <p className="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">{state.coreMemory.human}</p>
                                         </div>
@@ -110,7 +110,7 @@ export function AgentInspectorPane({ agentId, onClose }: AgentInspectorProps) {
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="p-4 border border-dashed border-white/10 rounded-lg text-center flex flex-col items-center justify-center gap-1 bg-black/20">
+                                    <div className="p-4 border border-dashed border-slate-800 rounded-lg text-center flex flex-col items-center justify-center gap-1 bg-slate-950">
                                         <span className="text-xs text-slate-500">No mutated instructions</span>
                                         <span className="text-[10px] text-slate-600">Pure base system prompt active</span>
                                     </div>
@@ -123,7 +123,7 @@ export function AgentInspectorPane({ agentId, onClose }: AgentInspectorProps) {
                                     <Layers className="w-3.5 h-3.5 text-blue-400" />
                                     Local Blackboard
                                 </h3>
-                                <div className="bg-[#0f111a] border border-white/5 rounded-lg p-3 font-mono text-[10px] text-slate-300 overflow-x-auto relative">
+                                <div className="bg-slate-950 border border-slate-800 rounded-lg p-3 font-mono text-[10px] text-slate-300 overflow-x-auto relative">
                                     {Object.keys(state.localBlackboard || {}).length > 0 ? (
                                         <pre>{JSON.stringify(state.localBlackboard, null, 2)}</pre>
                                     ) : (
@@ -148,7 +148,7 @@ export function AgentInspectorPane({ agentId, onClose }: AgentInspectorProps) {
                                         ))}
                                     </div>
                                 ) : (
-                                    <div className="p-4 border border-dashed border-white/10 rounded-lg text-center text-xs text-slate-500 bg-black/20">
+                                    <div className="p-4 border border-dashed border-slate-800 rounded-lg text-center text-xs text-slate-500 bg-slate-950">
                                         No tools hosted locally
                                     </div>
                                 )}

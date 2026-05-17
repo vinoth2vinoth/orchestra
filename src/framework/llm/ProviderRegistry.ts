@@ -5,15 +5,26 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createDeepSeek } from '@ai-sdk/deepseek';
 import { ModelTracker } from './ModelKnowledge.ts';
 import { ContextOptimizer } from './ContextOptimizer.ts';
+import { LLMAdapter, LLMResponse } from './LLMAdapter.ts';
+import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
+import * as fs from 'fs';
+
+const logToFile = (msg: string) => {
+    try {
+        fs.appendFileSync('server_logs.txt', `[${new Date().toISOString()}] ${msg}\n`);
+    } catch (e) {}
+};
 
 export type ProviderType = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'unknown';
 export type ModelTier = 'POLICY' | 'EXECUTION' | 'UTILITY';
 
 export interface LLMConfig {
-    apiKey: string;
+    apiKey?: string;
     modelName?: string; // Optional override, otherwise defaults to best model per provider
     baseURL?: string; // Optional custom endpoint for generic OpenAI-compatible providers
     temperature?: number;
+    maxTokens?: number;
+    disableSummarization?: boolean;
     tier?: ModelTier; 
     fallbackConfig?: LLMConfig; // If a request fails (e.g. 429), try this next config
     useNativeREST?: boolean; // Bypass Vercel SDK and use pure industry standard fetch
@@ -22,8 +33,6 @@ export interface LLMConfig {
 import { SimulationManager } from '../core/SimulationManager.ts';
 
 export class ProviderRegistry {
-    // ... rest up to getModel
-
     /**
      * Infer the provider based on standard API key prefixes and formats.
      */
@@ -85,6 +94,72 @@ export class ProviderRegistry {
      * Used if Vercel API SDK breaks, is discontinued, or is bypassed via config.
      */
     public static async generateNativeREST(config: LLMConfig, systemPrompt: string, messages: any[], tools?: Record<string, any>, responseFormat?: any): Promise<any> {
+        const isGoogle = ProviderRegistry.detectProvider(config.apiKey, config.modelName) === 'gemini';
+        logToFile(`Entered generateNativeREST. isGoogle: ${isGoogle}, model: ${config.modelName}`);
+        
+        if (isGoogle) {
+            const modelName = config.modelName || 'gemini-2.5-flash';
+            // Ensure model name has proper format for REST API
+            const resolvedModel = modelName.startsWith('models/') ? modelName : `models/${modelName}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/${resolvedModel}:generateContent?key=${config.apiKey}`;
+            logToFile(`Calling Google Native REST: ${url.split('?')[0]}`);
+            
+            const contents = messages.map(m => ({
+                role: m.role === 'user' ? 'user' : 'model',
+                parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
+            }));
+            
+            const payload: any = {
+                contents,
+                system_instruction: { parts: [{ text: systemPrompt }] },
+                generationConfig: {
+                    temperature: config.temperature ?? 0.3,
+                    responseMimeType: responseFormat?.type === 'json_object' ? 'application/json' : 'text/plain'
+                }
+            };
+            
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 60000); // 60s timeout for single LLM call
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                    signal: controller.signal
+                });
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    const err = await response.text();
+                    logToFile(`Google Native REST Error: ${response.status} - ${err}`);
+                    throw new Error(`Google Native REST Error: ${response.status} - ${err}`);
+                }
+                const data = await response.json();
+                const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                if (!text) {
+                    logToFile(`Google Native REST returned empty response candidates. Data: ${JSON.stringify(data)}`);
+                    throw new Error("Google Native REST returned empty response");
+                }
+                
+                logToFile(`Google Native REST Success. Text length: ${text.length}`);
+                
+                return {
+                    text,
+                    object: responseFormat?.type === 'json_object' ? JSON.parse(text) : undefined,
+                    usage: { 
+                        promptTokens: data.usageMetadata?.promptTokenCount || 0,
+                        completionTokens: data.usageMetadata?.candidatesTokenCount || 0,
+                        totalTokens: data.usageMetadata?.totalTokenCount || 0
+                    }
+                };
+            } catch (e: any) {
+                clearTimeout(timeoutId);
+                logToFile(`Google Native REST Exception: ${e.message}`);
+                throw e;
+            }
+        }
+
         let url = config.baseURL || 'https://api.openai.com/v1';
         url = url.endsWith('/') ? url.slice(0, -1) : url;
         
@@ -220,9 +295,10 @@ export class ProviderRegistry {
                 const google = createGoogleGenerativeAI({ apiKey: config.apiKey });
                 let model = config.modelName;
                 if (!model) {
-                    if (tier === 'POLICY') model = 'gemini-2.5-flash-lite';
-                    else model = 'gemini-2.5-flash-lite';
+                    if (tier === 'POLICY') model = 'gemini-2.5-flash';
+                    else model = 'gemini-2.5-flash';
                 }
+                logToFile(`Mapped model for Google: ${model}`);
                 return google(model);
             }
             case 'deepseek': {
@@ -237,6 +313,46 @@ export class ProviderRegistry {
     }
 
     /**
+     * Resiliently executes an LLM generation with exponential backoff on transient errors.
+     */
+    private static async resilientExecute<T>(
+        fn: () => Promise<T>, 
+        fallbackConfig?: LLMConfig,
+        retryCount = 4
+    ): Promise<T> {
+        let lastError: any;
+        for (let i = 0; i < retryCount; i++) {
+            try {
+                return await fn();
+            } catch (error: any) {
+                lastError = error;
+                const isTransient = error.statusCode === 429 || 
+                                   error.statusCode >= 500 || 
+                                   error.name === 'RetryError' ||
+                                   error.message?.includes('rate limit') ||
+                                   error.message?.includes('timeout') ||
+                                   error.message?.includes('quota');
+
+                if (!isTransient) throw error; // Fatal error, don't retry
+
+                if (i < retryCount - 1) {
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    console.warn(`LLM Transient Error: ${error.message}. Retrying in ${Math.round(delay)}ms (Attempt ${i+1}/${retryCount})`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+
+        if (fallbackConfig) {
+            console.warn(`LLM Exhausted Retries with Primary. Failing over to fallback provider...`);
+            // We would recursively call wait... but we need to know WHICH generation method to call.
+            // Simplified: we just let the caller handle fallback if possible, or we throw.
+        }
+        
+        throw lastError;
+    }
+
+    /**
      * Universal text generation method acting as facade for all models.
      */
     public static async generateObj(
@@ -246,83 +362,65 @@ export class ProviderRegistry {
         schema: any
     ): Promise<any> {
         // Optimize Context using ContextOptimizer
-        const optimizedMessages = ContextOptimizer.optimizeMessages(messages, { toolOutputLimit: 2500 });
+        const { globalSummarizer } = await import('../memory/SummarizerAgent.ts');
+        const optimizedMessages = await ContextOptimizer.optimizeMessages(
+            messages, 
+            { 
+                toolOutputLimit: 2500, 
+                maxContextTokens: config.maxTokens || 100000,
+                disableSummarization: config.disableSummarization 
+            },
+            (h) => globalSummarizer.execute(h)
+        );
+
+        // Final safety valve
+        const finalMessages = ContextOptimizer.hardTruncate(optimizedMessages, config.maxTokens || 100000);
         
         if (SimulationManager.isActive()) {
-            return this.generateSimulatedObj(optimizedMessages, schema);
+            return this.generateSimulatedObj(finalMessages, schema);
         }
         
-        if (config.useNativeREST) {
+        return this.resilientExecute(async () => {
+            if (config.useNativeREST) {
+                return await this.generateNativeREST(config, systemPrompt, finalMessages, undefined, { type: "json_object" });
+            }
+
+            const model = this.getModel(config, finalMessages);
+            logToFile(`Calling generateObject with model: ${config.modelName || 'default'} (apikey: ${config.apiKey ? 'present' : 'missing'})`);
+            console.log(`[ProviderRegistry] Calling generateObject with model: ${config.modelName || 'default'}`);
             try {
-                return await this.generateNativeREST(config, systemPrompt, optimizedMessages, undefined, { type: "json_object" });
-            } catch (e: any) {
-                if (config.fallbackConfig) return this.generateObj(config.fallbackConfig, systemPrompt, optimizedMessages, schema);
-                throw e;
-            }
-        }
+                const response = await generateObject({
+                    model,
+                    system: systemPrompt,
+                    messages: optimizedMessages,
+                    schema,
+                    temperature: config.temperature ?? 0.3
+                });
 
-        try {
-            const model = this.getModel(config, optimizedMessages);
-            
-            const response = await generateObject({
-                model,
-                system: systemPrompt,
-                messages: optimizedMessages,
-                schema,
-                temperature: config.temperature ?? 0.3
-            });
+                const usage = LLMAdapter.normalizeUsage(response.usage);
+                const modelId = LLMAdapter.getModelId(model, config.modelName);
 
-            const cost = ModelTracker.estimateCost(
-                model.modelId, 
-                response.usage?.promptTokens || 0,
-                response.usage?.completionTokens || 0
-            );
+                const cost = ModelTracker.estimateCost(
+                    modelId, 
+                    usage.promptTokens,
+                    usage.completionTokens
+                );
 
-            return {
-                ...response,
-                usage: response.usage,
-                cost: cost
-            };
-        } catch (error: any) {
-            console.error(`LLM generateObject failed:`, error);
-            const isQuotaError = error.message?.toLowerCase().includes('quota') || 
-                               error.message?.toLowerCase().includes('rate limit') ||
-                               error.statusCode === 429 ||
-                               error.name === 'RetryError';
-
-            if (isQuotaError) {
-                 console.warn(`Quota exceeded, returning resilient mock structure.`);
-                 // Intelligent mock response based on common schemas
-                 const object: any = {
-                     answer: `[RESILIENT_SIMULATION]: Based on the request, a potential technical architecture would involve decentralizing the power grid using ${messages[0]?.content?.includes('blockchain') ? 'blockchain-based smart contracts' : 'distributed hash tables'}. This simulation is active due to API limits.`,
-                     resolution: 'APPROVED',
-                     authorized: true,
-                     subtasks: [
-                         { id: 'st-1', description: 'Analyze existing grid topology', dependencies: [] },
-                         { id: 'st-2', description: 'Define consensus protocols', dependencies: ['st-1'] },
-                         { id: 'st-3', description: 'Simulate load balancing', dependencies: ['st-2'] }
-                     ]
-                 };
-                 return {
-                     object,
-                     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
-                 };
+                return {
+                    ...response,
+                    usage,
+                    cost: cost,
+                    modelId
+                };
+            } catch (err: any) {
+                logToFile(`generateObject FAILED: ${err.message}`);
+                console.error(`[ProviderRegistry] generateObject failed: ${err.message}`, err);
+                throw err;
             }
-            if (config.fallbackConfig) {
-                console.warn(`Primary LLM failed: ${error.message}. Failing over to fallback...`);
-                return this.generateObj(config.fallbackConfig, systemPrompt, messages, schema);
-            }
-            
-            // Final fallback to native REST if Vercel SDK entirely fails and config allows testing standard fallback
-            console.warn(`Attempting native REST fallback due to SDK failure...`);
-            try {
-                return await this.generateNativeREST(config, systemPrompt, messages, undefined, { type: "json_object" });
-            } catch (fallbackError) {
-                console.error(`Native REST fallback also failed:`, fallbackError);
-            }
-            
+        }, config.fallbackConfig).catch(error => {
+            if (config.fallbackConfig) return this.generateObj(config.fallbackConfig, systemPrompt, messages, schema);
             throw error;
-        }
+        });
     }
 
     /**
@@ -334,84 +432,77 @@ export class ProviderRegistry {
         messages: any[], 
         tools?: Record<string, any>
     ): Promise<any> {
-        // Optimize Context using ContextOptimizer
-        const optimizedMessages = ContextOptimizer.optimizeMessages(messages, { toolOutputLimit: 2500 });
+        // Optimize Context using ContextOptimizer with background summarization
+        const { globalSummarizer } = await import('../memory/SummarizerAgent.ts');
+        const optimizedMessages = await ContextOptimizer.optimizeMessages(
+            messages, 
+            { 
+                toolOutputLimit: 2500, 
+                maxContextTokens: config.maxTokens || 100000,
+                disableSummarization: config.disableSummarization 
+            },
+            (h) => globalSummarizer.execute(h)
+        );
+
+        // Final safety valve
+        const finalMessages = ContextOptimizer.hardTruncate(optimizedMessages, config.maxTokens || 100000);
 
         if (SimulationManager.isActive()) {
-            return this.generateSimulatedText(optimizedMessages);
+            return this.generateSimulatedText(finalMessages);
         }
 
-        if (config.useNativeREST) {
-            try {
-                return await this.generateNativeREST(config, systemPrompt, optimizedMessages, tools);
-            } catch (e: any) {
-                if (config.fallbackConfig) return this.generate(config.fallbackConfig, systemPrompt, optimizedMessages, tools);
-                throw e;
+        return this.resilientExecute(async () => {
+            if (config.useNativeREST) {
+                return await this.generateNativeREST(config, systemPrompt, finalMessages, tools);
             }
-        }
 
-        try {
             const isDeepSeek = config.modelName?.includes('deepseek') || ProviderRegistry.detectProvider(config.apiKey, config.modelName, config.baseURL) === 'deepseek';
             const safeTools = isDeepSeek ? undefined : tools;
-            const model = this.getModel(config, optimizedMessages, safeTools);
-            
+            const model = this.getModel(config, finalMessages, safeTools);
+            logToFile(`Calling generateText with model: ${config.modelName || 'default'} (apikey: ${config.apiKey ? 'present' : 'missing'})`);
+            console.log(`[ProviderRegistry] Calling generateText with model: ${config.modelName || 'default'}`);
+
             // Check context limits via Model Tracker
-            const tokenEstimate = JSON.stringify(optimizedMessages).length / 4;
-            const support = ModelTracker.doesModelSupportRequest(model.modelId, tokenEstimate, !!safeTools);
+            const tokenEstimate = JSON.stringify(finalMessages).length / 4;
+            const modelId = LLMAdapter.getModelId(model, config.modelName);
+            const support = ModelTracker.doesModelSupportRequest(modelId, tokenEstimate, !!safeTools);
             if (!support.supported) {
-                 console.error(`Request rejected by KnowledgeBase: ${support.reason}`);
                  throw new Error(`Model Context Limit or Capability Error: ${support.reason}`);
             }
 
-            const response = await generateText({
-                model,
-                system: systemPrompt,
-                messages: optimizedMessages,
-                tools: safeTools,
-                temperature: config.temperature ?? 0.3,
-                maxSteps: safeTools ? 5 : 1
-            } as any);
-
-            const cost = ModelTracker.estimateCost(
-                model.modelId, 
-                response.usage?.promptTokens || 0,
-                response.usage?.completionTokens || 0,
-                !!safeTools
-            );
-
-            return {
-                ...response,
-                usage: response.usage,
-                cost: cost
-            };
-        } catch (error: any) {
-            console.error(`LLM generateText failed:`, error);
-            const isQuotaError = error.message?.toLowerCase().includes('quota') || 
-                               error.message?.toLowerCase().includes('rate limit') ||
-                               error.statusCode === 429 ||
-                               error.name === 'RetryError';
-
-            if (isQuotaError) {
-                 console.warn(`Quota exceeded, returning resilient mock text.`);
-                 return {
-                     text: `[SIMULATED PERFORMANCE]: The Orchestra system is currently operating in Resilient Hybrid Mode due to upstream provider limits. I have analyzed the requirement for "${messages[0]?.content?.substring(0, 50) ?? 'task'}" and would proceed by orchestrating the sub-agents to draft the decentralized blockchain architecture.`,
-                     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
-                 };
-            }
-            if (config.fallbackConfig) {
-                console.warn(`Primary LLM failed: ${error.message}. Failing over to fallback...`);
-                return this.generate(config.fallbackConfig, systemPrompt, messages, tools);
-            }
-            
-            console.warn(`Attempting native REST fallback due to SDK failure...`);
             try {
-                return await this.generateNativeREST(config, systemPrompt, messages, tools);
-            } catch (fallbackError) {
-                console.error(`Native REST fallback also failed:`, fallbackError);
+                const response = await generateText({
+                    model,
+                    system: systemPrompt,
+                    messages: finalMessages,
+                    tools: safeTools,
+                    temperature: config.temperature ?? 0.3,
+                    maxSteps: safeTools ? 5 : 1
+                } as any);
+
+                const usage = LLMAdapter.normalizeUsage(response.usage);
+                const cost = ModelTracker.estimateCost(
+                    modelId, 
+                    usage.promptTokens,
+                    usage.completionTokens,
+                    !!safeTools
+                );
+
+                return {
+                    ...response,
+                    usage,
+                    cost: cost,
+                    modelId
+                };
+            } catch (err: any) {
+                logToFile(`generateText FAILED: ${err.message}`);
+                console.error(`[ProviderRegistry] generateText failed: ${err.message}`, err);
+                throw err;
             }
-            
+        }, config.fallbackConfig).catch(error => {
+            if (config.fallbackConfig) return this.generate(config.fallbackConfig, systemPrompt, messages, tools);
             throw error;
-        }
+        });
     }
 
     /**
@@ -423,28 +514,40 @@ export class ProviderRegistry {
         messages: any[], 
         tools?: Record<string, any>
     ): Promise<any> {
-        // Optimize Context using ContextOptimizer
-        const optimizedMessages = ContextOptimizer.optimizeMessages(messages, { toolOutputLimit: 2500 });
+        // Optimize Context using ContextOptimizer with background summarization
+        const { globalSummarizer } = await import('../memory/SummarizerAgent.ts');
+        const optimizedMessages = await ContextOptimizer.optimizeMessages(
+            messages, 
+            { 
+                toolOutputLimit: 2500, 
+                maxContextTokens: config.maxTokens || 100000,
+                disableSummarization: config.disableSummarization 
+            },
+            (h) => globalSummarizer.execute(h)
+        );
+
+        // Final safety valve
+        const finalMessages = ContextOptimizer.hardTruncate(optimizedMessages, config.maxTokens || 100000);
 
         if (SimulationManager.isActive()) {
-            return this.generateSimulatedStream(optimizedMessages);
+            return this.generateSimulatedStream(finalMessages);
         }
         
         if (config.useNativeREST) {
             try {
-                const res = await this.generateNativeREST(config, systemPrompt, optimizedMessages, tools);
+                const res = await this.generateNativeREST(config, systemPrompt, finalMessages, tools);
                 return {
                     textStream: (async function* () { 
                         yield res.text; 
                     })(),
                     text: Promise.resolve(res.text),
-                    toolCalls: Promise.resolve(res.toolCalls),
+                    toolCalls: Promise.resolve(res.toolCalls || []),
                     toolResults: Promise.resolve([]),
                     usage: Promise.resolve(res.usage),
-                    finishReason: Promise.resolve(res.toolCalls.length > 0 ? 'tool-calls' : 'stop')
+                    finishReason: Promise.resolve((res.toolCalls && res.toolCalls.length > 0) ? 'tool-calls' : 'stop')
                 };
             } catch (e: any) {
-                if (config.fallbackConfig) return this.generateStream(config.fallbackConfig, systemPrompt, optimizedMessages, tools);
+                if (config.fallbackConfig) return this.generateStream(config.fallbackConfig, systemPrompt, finalMessages, tools);
                 throw e;
             }
         }
@@ -452,7 +555,8 @@ export class ProviderRegistry {
         try {
             const isDeepSeek = config.modelName?.includes('deepseek') || ProviderRegistry.detectProvider(config.apiKey, config.modelName, config.baseURL) === 'deepseek';
             const safeTools = isDeepSeek ? undefined : tools;
-            const model = this.getModel(config, optimizedMessages, safeTools);
+            const model = this.getModel(config, finalMessages, safeTools);
+            const modelId = LLMAdapter.getModelId(model, config.modelName);
             
             console.log("\n--- TOOLS PAYLOAD DEEPSEEK DEBUG ---");
             try {
@@ -465,7 +569,7 @@ export class ProviderRegistry {
             const response = await streamText({
                 model,
                 system: systemPrompt,
-                messages: optimizedMessages,
+                messages: finalMessages,
                 tools: safeTools,
                 temperature: config.temperature ?? 0.3,
             });
@@ -509,10 +613,10 @@ export class ProviderRegistry {
                         yield res.text; 
                     })(),
                     text: Promise.resolve(res.text),
-                    toolCalls: Promise.resolve(res.toolCalls),
+                    toolCalls: Promise.resolve(res.toolCalls || []),
                     toolResults: Promise.resolve([]),
                     usage: Promise.resolve(res.usage),
-                    finishReason: Promise.resolve(res.toolCalls.length > 0 ? 'tool-calls' : 'stop')
+                    finishReason: Promise.resolve((res.toolCalls && res.toolCalls.length > 0) ? 'tool-calls' : 'stop')
                 };
             } catch (fallbackError) {
                 console.error(`Native REST stream fallback also failed:`, fallbackError);

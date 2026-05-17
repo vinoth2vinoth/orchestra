@@ -1,33 +1,56 @@
 import { WorkflowConfig } from './Orchestrator.ts';
 
+/**
+ * Interface for pluggable state storage (e.g. Redis, Firestore, S3).
+ * This removes the "Monolithic God Object" memory dependency.
+ */
+export interface IStateProvider {
+    save(id: string, state: any): Promise<void>;
+    load(id: string): Promise<any | undefined>;
+    delete(id: string): Promise<void>;
+    list(): Promise<[string, any][]>;
+}
+
+export class MemoryStateProvider implements IStateProvider {
+    private store = new Map<string, any>();
+    async save(id: string, state: any) { this.store.set(id, state); }
+    async load(id: string) { return this.store.get(id); }
+    async delete(id: string) { this.store.delete(id); }
+    async list() { return Array.from(this.store.entries()); }
+}
+
 export interface WorkflowState {
     threadId: string;
     approvalId: string;
     task: any;
-    config: any; // We just store serializable parts or references
+    config: any;
     history: any[];
-    agentDefinitions?: any[]; // Save simple config objects to rehydrate agents
+    agentDefinitions?: any[];
     resumeAgentId?: string;
     step?: number;
 }
 
 export class StateStore {
-    private store = new Map<string, WorkflowState>();
+    private provider: IStateProvider;
 
-    public saveState(approvalId: string, state: WorkflowState) {
-        this.store.set(approvalId, state);
+    constructor(provider: IStateProvider = new MemoryStateProvider()) {
+        this.provider = provider;
     }
 
-    public getState(approvalId: string): WorkflowState | undefined {
-        return this.store.get(approvalId);
+    public async saveState(approvalId: string, state: WorkflowState) {
+        await this.provider.save(approvalId, state);
     }
 
-    public deleteState(approvalId: string) {
-        this.store.delete(approvalId);
+    public async getState(approvalId: string): Promise<WorkflowState | undefined> {
+        return await this.provider.load(approvalId);
     }
 
-    public getAllStates() {
-        return Array.from(this.store.entries());
+    public async deleteState(approvalId: string) {
+        await this.provider.delete(approvalId);
+    }
+
+    public async getAllStates() {
+        return await this.provider.list();
     }
 }
 

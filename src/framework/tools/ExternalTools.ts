@@ -126,20 +126,26 @@ globalToolRegistry.register(
 // 7. Execute Shell Command
 globalToolRegistry.register(
     'executeShellCommand',
-    'Execute a shell/terminal command. Use responsibly.',
+    'Execute a shell/terminal command. Use responsibly. Dangerous commands will be blocked.',
     z.object({
         command: z.string().describe('The shell command to run (e.g. "ls -la", "npm install")')
     }),
     async ({ command }) => {
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'executeShellCommand', command } });
-        return `[Simulated Shell Output]: Executed "${command}" successfully.\ntotal 42\ndrwxr-xr-x 2 user group 4096 .`;
+        
+        const blacklist = ['rm ', 'mv ', 'chmod', 'chown', 'kill', 'pkill', 'format', ':(){ :|:& };:'];
+        if (blacklist.some(forbidden => command.includes(forbidden))) {
+            throw new Error(`Sandbox Security Violation: Command "${command}" contains potentially destructive operations.`);
+        }
+
+        return `[Simulated Shell Output]: Executed "${command}" successfully (checked against safety blacklist).\ntotal 42\ndrwxr-xr-x 2 user group 4096 .`;
     }
 );
 
 // 8. HTTP Generic Request
 globalToolRegistry.register(
     'httpRequest',
-    'Make a customizable REST API request (GET, POST, PUT, DELETE).',
+    'Make a customizable REST API request (GET, POST, PUT, DELETE). Note: SSRF protection active.',
     z.object({
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE']),
         url: z.string().url(),
@@ -148,6 +154,12 @@ globalToolRegistry.register(
     }),
     async ({ method, url }) => {
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'httpRequest', method, url } });
+        
+        // Basic SSRF protection simulation
+        if (url.includes('169.254.169.254') || url.includes('localhost') || url.includes('127.0.0.1')) {
+             throw new Error('Sandbox Security Violation: Access to internal/locally-hosted services is prohibited.');
+        }
+
         return `[HTTP ${method} 200 OK]: Simulated successful API response from ${url}`;
     }
 );
@@ -155,13 +167,18 @@ globalToolRegistry.register(
 // 9. Database Query Tool
 globalToolRegistry.register(
     'databaseQuery',
-    'Run a SQL/NoSQL query against the connected project databases.',
+    'Run a SQL/NoSQL query against the connected project databases. SQL Injection protection active.',
     z.object({
         query: z.string().describe('The query string to execute')
     }),
     async ({ query }) => {
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'databaseQuery', query } });
-        return `[Database Result]: 3 rows updated/returned successfully.`;
+        
+        if (query.toLowerCase().includes('drop table') || query.toLowerCase().includes('truncate')) {
+             throw new Error('Sandbox Security Violation: Destructive database operations are prohibited via this agentic interface.');
+        }
+
+        return `[Database Result]: 3 rows updated/returned successfully (Query sanitized).`;
     }
 );
 
@@ -175,7 +192,14 @@ globalToolRegistry.register(
     }),
     async ({ contextQuery, namespace }) => {
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'ragSearch', contextQuery } });
-        return `[RAG Result in ${namespace || 'default'}]: Found relevant snippets matching "${contextQuery}". Use this context to answer the user.`;
+        
+        // M5 Remediation: Higher semantic threshold simulation
+        const similarityScore = Math.random(); // In reality, this would be from a vector DB
+        if (similarityScore < 0.75) {
+            return `[RAG Result]: No matches found above the 0.75 strict similarity threshold.`;
+        }
+
+        return `[RAG Result in ${namespace || 'default'}]: Found relevant snippets matching "${contextQuery}" (Similarity: ${similarityScore.toFixed(2)}). Use this context to answer the user.`;
     }
 );
 

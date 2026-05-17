@@ -225,13 +225,13 @@ export function NeuralMesh({ liveLogs, agents }) {
                     </div>
                 </div>
             </div>
-            <div ref={containerRef} className="flex-1 bg-black/40 rounded-xl border border-white/5 relative overflow-hidden group">
+            <div ref={containerRef} className="flex-1 bg-slate-950 rounded-xl border border-slate-800 relative overflow-hidden group">
                 <div className="absolute inset-0 opacity-10 bg-[radial-gradient(#3b82f6_1px,transparent_1px)] [background-size:16px_16px]"></div>
                 <svg ref={svgRef} className="w-full h-full" />
                 
                 {/* Overlay instructions */}
                 <div className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                    <span className="text-[8px] text-slate-600 uppercase font-mono bg-black/60 px-2 py-1 rounded">Drag nodes to rearrange synaptic weights</span>
+                    <span className="text-[8px] text-slate-600 uppercase font-mono bg-slate-900 px-2 py-1 rounded shadow-sm">Drag nodes to rearrange synaptic weights</span>
                 </div>
             </div>
         </div>

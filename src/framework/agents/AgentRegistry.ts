@@ -69,6 +69,10 @@ export class AgentRegistry {
         return Array.from(this.agents.values());
     }
 
+    public getAll(): BaseAgent[] {
+        return this.getAllAgents();
+    }
+
     /**
      * Runtime privilege escalation: grants a new capability to an existing agent.
      */

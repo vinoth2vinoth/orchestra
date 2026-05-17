@@ -122,7 +122,7 @@ export function ParadigmPlayground({ agents, edges, setEdges }: ParadigmPlaygrou
 
     return (
         <div 
-            className="w-full h-64 bg-black/40 rounded-xl border border-white/10 relative overflow-hidden group select-none"
+            className="w-full h-64 bg-slate-950 rounded-xl border border-slate-800 relative overflow-hidden group select-none"
             ref={containerRef}
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
@@ -239,12 +239,12 @@ export function ParadigmPlayground({ agents, edges, setEdges }: ParadigmPlaygrou
                         onMouseUp={(e) => handleNodeMouseUp(e, node.id)}
                     >
                         <div className={cn(
-                            "w-10 h-10 rounded-full flex items-center justify-center border-2 bg-[#0f111a] shadow-[0_0_15px_rgba(0,0,0,0.5)] z-10 relative",
+                            "w-10 h-10 rounded-full flex items-center justify-center border-2 bg-slate-900 shadow-[0_0_15px_rgba(0,0,0,0.5)] z-10 relative",
                             isManager ? "border-amber-500/50" : "border-blue-500/50"
                         )}>
                             <div className={cn("w-3 h-3 rounded-full", node.agent.avatarColor)}></div>
                             {/* Hover info */}
-                            <div className="absolute -top-10 bg-black/80 px-2 py-1 rounded text-[10px] font-bold text-white whitespace-nowrap opacity-0 group-hover/node:opacity-100 transition-opacity pointer-events-none">
+                            <div className="absolute -top-10 bg-slate-800 px-2 py-1 rounded text-[10px] font-bold text-white whitespace-nowrap opacity-0 group-hover/node:opacity-100 transition-opacity pointer-events-none shadow-lg">
                                 {node.agent.name} <br/> <span className="text-slate-400 font-mono text-[8px]">{node.agent.role}</span>
                             </div>
                         </div>

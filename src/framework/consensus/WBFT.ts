@@ -50,13 +50,17 @@ export class WBFTConsensus {
         }
 
         // Group identical answers (simplified clustering for exact match)
-        // Production system would use Embedding-based semantic clustering 
         const answerWeights = new Map<string, number>();
+        const answerCounts = new Map<string, number>();
 
         for (const vote of votes) {
             const weight = this.getAgentWeight(vote.agentId);
+            
             const currentWeight = answerWeights.get(vote.proposedAnswer) || 0;
             answerWeights.set(vote.proposedAnswer, currentWeight + weight);
+
+            const currentCount = answerCounts.get(vote.proposedAnswer) || 0;
+            answerCounts.set(vote.proposedAnswer, currentCount + 1);
         }
 
         // Find the answer with highest total weight
@@ -72,12 +76,17 @@ export class WBFTConsensus {
 
         // Determine if (2f+1)/n threshold of total vote weights is met
         const totalPossibleWeight = agents.reduce((sum, a) => sum + this.getAgentWeight(a.card.id), 0);
+        const bestAnswerCount = answerCounts.get(bestAnswer) || 0;
         
-        // Approximate 66% supermajority rule weighted
-        if (maxWeight >= totalPossibleWeight * 0.66) {
+        // H3 Remediation: Require both numeric majority AND weight majority
+        const weightThresholdMet = maxWeight >= totalPossibleWeight * 0.66;
+        const numericMajorityMet = bestAnswerCount > votes.length / 2;
+
+        if (weightThresholdMet && numericMajorityMet) {
             return bestAnswer;
         } else {
-            throw new Error(`Consensus could not be reached. Contested vote. Max weight: ${maxWeight}/${totalPossibleWeight}`);
+            const reason = !weightThresholdMet ? `Weight threshold not met (${maxWeight}/${totalPossibleWeight})` : `Numeric majority not met (${bestAnswerCount}/${votes.length})`;
+            throw new Error(`Consensus could not be reached: ${reason}`);
         }
     }
 

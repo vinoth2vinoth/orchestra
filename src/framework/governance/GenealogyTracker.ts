@@ -42,14 +42,16 @@ export class GenealogyTracker {
         return id;
     }
 
-    public traceBlastRadius(nodeId: string): string[] {
-        // Find all subsequent nodes that depended on this node
+    public traceBlastRadius(nodeId: string, visited: Set<string> = new Set()): string[] {
+        if (visited.has(nodeId)) return [];
+        visited.add(nodeId);
+
         const cascade: string[] = [];
         this.graph.forEach((node, id) => {
             if (node.parentIds.includes(nodeId)) {
                 cascade.push(id);
                 // Recursively trace
-                cascade.push(...this.traceBlastRadius(id));
+                cascade.push(...this.traceBlastRadius(id, visited));
             }
         });
         return Array.from(new Set(cascade));

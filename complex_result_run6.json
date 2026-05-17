@@ -1,0 +1,41 @@
+{
+  "plan": {
+    "subtasks": [
+      {
+        "id": "1",
+        "description": "Calculate Phase A cost: 500.",
+        "dependencies": []
+      },
+      {
+        "id": "2",
+        "description": "Calculate Phase B cost: double of Phase A (2 * 500 = 1000).",
+        "dependencies": [
+          "1"
+        ]
+      },
+      {
+        "id": "3",
+        "description": "Calculate Phase C cost: 300 + Phase B (300 + 1000 = 1300).",
+        "dependencies": [
+          "2"
+        ]
+      },
+      {
+        "id": "4",
+        "description": "Sum the costs of Phase A, Phase B, and Phase C to get total cost.",
+        "dependencies": [
+          "1",
+          "2",
+          "3"
+        ]
+      }
+    ]
+  },
+  "mapResults": {
+    "1": "Phase A cost: 500.",
+    "2": "Phase B cost: 1000",
+    "3": "Phase C cost = 300 + Phase B cost  \nPhase B cost = 1000 (from dependency [2])  \n\nPhase C cost = 300 + 1000 = **1300**",
+    "4": "Phase A cost: 500  \nPhase B cost: 1000  \nPhase C cost: 1300  \n\nTotal cost = 500 + 1000 + 1300 = **2800**"
+  },
+  "finalAnswer": "{\n  \"needsSpecialist\": false,\n  \"expertise\": \"\"\n}"
+}

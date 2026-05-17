@@ -1,7 +1,9 @@
 import { BaseAgent } from './BaseAgent.ts';
 import { globalGenealogy } from '../governance/GenealogyTracker.ts';
 import { globalRegistry } from './AgentRegistry.ts';
-import { globalEventStore } from '../core/EventStore.ts';
+import { globalEventStore } from '../core/EventStore.js';
+import { Sanitizer } from '../security/Sanitizer.ts';
+import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
 
 export class WorkerAgent extends BaseAgent {
     public async execute(task: any, threadId: string): Promise<any> {
@@ -10,7 +12,7 @@ export class WorkerAgent extends BaseAgent {
         // Vector-Backed RAG Retrieval
         const relevantMemories = await this.memory.searchSimilarMemories(taskStr, 3);
         const ragContext = relevantMemories.length > 0 
-            ? '\n\nRelevant Context (RAG):\n' + relevantMemories.map(m => `- ${m.content}`).join('\n')
+            ? '\n\nRelevant Context (RAG):\n' + relevantMemories.map(m => `- ${Sanitizer.escapePromptInjections(m.content)}`).join('\n')
             : '';
 
         const messages: any[] = [
@@ -76,11 +78,10 @@ Otherwise, provide a "ROOT_CAUSE_ANALYSIS" and a "RECOVERY_INSTRUCTION" for the 
                     break; // Success
                 } else {
                     // STRATEGIC RE-PLANNING: Before retrying, generate/validate a plan
-                    globalEventStore.append({
-                        type: 'SYSTEM_HOOK',
-                        sourceAgentId: this.card.id,
-                        threadId,
-                        payload: { action: 'SELF_HEALING_START', reason: 'STRATEGY_REFRAME', feedback: critique }
+                    TelemetrySystem.emit(this.card.id, threadId, {
+                        action: 'REASONING_LOOP_RETRY',
+                        category: 'AGENT_LOGIC',
+                        metadata: { reason: 'STRATEGY_REFRAME', feedback: critique }
                     });
 
                     let feedbackInstruction = `CRITIQUE_RECEIVED: Your previous attempt was rejected.
@@ -99,11 +100,10 @@ Refined Strategy: Before giving the final answer, internalize the feedback. Ensu
                 attempts++;
                 const errorMsg = err.message || String(err);
                 
-                globalEventStore.append({
-                    type: 'SYSTEM_HOOK',
-                    sourceAgentId: this.card.id,
-                    threadId,
-                    payload: { action: 'SELF_HEALING_START', reason: 'EXCEPTION_THROWN', error: errorMsg }
+                TelemetrySystem.emit(this.card.id, threadId, {
+                    action: 'REASONING_LOOP_RETRY',
+                    category: 'AGENT_LOGIC',
+                    metadata: { reason: 'EXCEPTION_THROWN', error: errorMsg }
                 });
 
                 if (attempts >= maxHealingLoops) throw err;

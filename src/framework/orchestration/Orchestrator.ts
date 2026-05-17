@@ -8,6 +8,10 @@ import { globalEscalationManager } from '../governance/EscalationManager.ts';
 import { ProviderRegistry } from '../llm/ProviderRegistry.ts';
 import { globalPluginRegistry } from '../core/PluginRegistry.ts';
 import { globalCircuitBreaker } from '../resilience/CircuitBreaker.ts';
+import { globalCheckpointer } from './Checkpointer.ts';
+import { globalQueueBroker } from './QueueBroker.ts';
+import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
+import { Sanitizer } from '../security/Sanitizer.ts';
 
 export type Paradigm = 'GRAPH' | 'HIERARCHICAL' | 'CONSENSUS' | 'EVENT_DRIVEN' | 'SWARM' | 'DECENTRALIZED_SWARM' | 'MAP_REDUCE' | 'DEBATE' | 'MOA';
 
@@ -19,6 +23,7 @@ export interface WorkflowConfig {
     edges?: { from: string; to: string }[]; // Used for GRAPH
     events?: { [eventName: string]: string[] }; // Used for EVENT_DRIVEN (event -> agentIds)
     blackboard?: Record<string, any>; // Persistent shared state
+    useDistributedQueue?: boolean; // Enable horizontal scalability
 }
 
 /**
@@ -27,9 +32,41 @@ export interface WorkflowConfig {
  */
 export class Orchestrator {
     private wbft = new WBFTConsensus();
-    private reflectionQueue: Promise<void> = Promise.resolve();
+    private reflectionQueue: string[] = [];
+    private activeReflections = 0;
+    private readonly MAX_CONCURRENT_REFLECTIONS = 5;
+    private readonly MAX_REFLECTION_QUEUE_SIZE = 100;
 
-    constructor() {}
+    private async queueReflection(threadId: string, agents: BaseAgent[]) {
+        if (this.reflectionQueue.length >= this.MAX_REFLECTION_QUEUE_SIZE) {
+            console.warn(`[Orchestrator] Reflection queue full. Dropping reflection for thread ${threadId}.`);
+            return;
+        }
+
+        this.reflectionQueue.push(threadId);
+        this.processReflectionQueue(agents);
+    }
+
+    private async processReflectionQueue(agents: BaseAgent[]) {
+        if (this.activeReflections >= this.MAX_CONCURRENT_REFLECTIONS || this.reflectionQueue.length === 0) {
+            return;
+        }
+
+        const threadId = this.reflectionQueue.shift()!;
+        this.activeReflections++;
+
+        try {
+            await this.runSelfReflection(threadId, agents);
+        } catch (err) {
+            console.error(`[Orchestrator] Self-reflection failed for thread ${threadId}:`, err);
+        } finally {
+            this.activeReflections--;
+            this.processReflectionQueue(agents);
+        }
+    }
+    private activeDependencyChains: Map<string, string[]> = new Map();
+    private readonly MAX_CONVERSATIONAL_DEPTH = 10;
+    private readonly MAX_SILENCE_TIMEOUT_MS = 60000; // 1 minute limit for any single agent response
 
     private getRoleWeight(role: string): number {
         switch(role) {
@@ -71,6 +108,7 @@ export class Orchestrator {
 
         // Initialize blackboard if missing
         if (!config.blackboard) config.blackboard = {};
+        config.blackboard._useDistributedQueue = config.useDistributedQueue === true;
 
         const maxRetries = config.maxRetries ?? 1;
         let attempt = 0;
@@ -133,7 +171,7 @@ export class Orchestrator {
                             urgency: a.card.urgency
                         }))
                     };
-                    globalStateStore.saveState(error.approvalId, stateToSave);
+                    await globalStateStore.saveState(error.approvalId, stateToSave);
                     
                     await globalPluginRegistry.emitOnWorkflowSleep(threadId, stateToSave);
                     
@@ -168,9 +206,7 @@ export class Orchestrator {
 
                     // Trigger Autonomous Self-Reflection (Dimension 07)
                     // We reflect on why the workflow exhausted its retries
-                    this.reflectionQueue = this.reflectionQueue.then(() => 
-                        this.runSelfReflection(threadId, config.agents).catch(err => console.error("Self-reflection failed:", err))
-                    );
+                    this.queueReflection(threadId, config.agents);
                     
                     throw finalErr;
                 }
@@ -194,11 +230,12 @@ export class Orchestrator {
             payload: { result }
         });
 
+        // Clear checkpoint file after full successful completion
+        await globalCheckpointer.clearCheckpoint(threadId);
+
         // Trigger Autonomous Self-Reflection (Dimension 07)
-        // This is non-blocking but queued to avoid LLM burst saturation
-        this.reflectionQueue = this.reflectionQueue.then(() => 
-            this.runSelfReflection(threadId, config.agents).catch(err => console.error("Self-reflection failed:", err))
-        );
+        // This is non-blocking and queued to avoid LLM burst saturation
+        this.queueReflection(threadId, config.agents);
 
         return result;
     }
@@ -257,7 +294,7 @@ If you find a meta-rule, return it in this format: "SYSTEM_OPTIMIZATION: [Rule]"
      * Resumes a suspended workflow when a webhook or approval provides the resolution.
      */
     public async resumeWorkflow(approvalId: string, resolution: 'APPROVED' | 'REJECTED' | 'MODIFIED', feedback?: string, agents?: BaseAgent[]): Promise<any> {
-        const state = globalStateStore.getState(approvalId);
+        const state = await globalStateStore.getState(approvalId);
         if (!state) {
             throw new Error(`Cannot resume: No suspended workflow found for approval ID ${approvalId}`);
         }
@@ -266,7 +303,7 @@ If you find a meta-rule, return it in this format: "SYSTEM_OPTIMIZATION: [Rule]"
         // (If we fully shut down the process, EscalationManager also needs this to hydrate, or we pass it back inside the agent's memory)
         globalEscalationManager.resolveApproval(approvalId, resolution, feedback);
         
-        globalStateStore.deleteState(approvalId);
+        await globalStateStore.deleteState(approvalId);
         
         await globalPluginRegistry.emitOnWorkflowResume(state.threadId, state);
         
@@ -316,25 +353,47 @@ If you find a meta-rule, return it in this format: "SYSTEM_OPTIMIZATION: [Rule]"
         if (!config.edges) throw new Error("Edges must be defined for GRAPH paradigm.");
         const blackboard = config.blackboard || {};
         
-        // Very basic topological execution simulation
         let currentState = task;
-        const executionPlan = config.edges; // simplified sequential fallback for now
+        const executionPlan = config.edges;
+        let executed = new Set<string>();
+        let currentAgentId: string | null = executionPlan.length > 0 ? executionPlan[0].from : null;
+        
+        // Hydrate from checkpointer if possible
+        const checkpoint = await globalCheckpointer.getLatestCheckpoint(threadId);
+        if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('graph_step_')) {
+            currentState = checkpoint.state.currentState;
+            checkpoint.state.executed.forEach((ex: string) => executed.add(ex));
+            currentAgentId = checkpoint.state.currentAgentId;
+            const cleanBlackboard = JSON.parse(JSON.stringify(checkpoint.state.blackboard || {}));
+            Object.assign(blackboard, cleanBlackboard);
+            console.log(`[Checkpointer] Resuming GRAPH at agent: ${currentAgentId}`);
+        }
         
         const agentMap = new Map(config.agents.map(a => [a.card.id, a]));
-        
-        const executed = new Set<string>();
-        let currentAgentId = executionPlan.length > 0 ? executionPlan[0].from : null;
         
         while (currentAgentId) {
             const agent = agentMap.get(currentAgentId);
             if (agent && !executed.has(currentAgentId)) {
                 currentState = await this.executeAgentTask(agent, currentState, threadId, blackboard);
                 executed.add(currentAgentId);
+                
+                const nextEdge = executionPlan.find(e => e.from === currentAgentId);
+                const nextAgentId = nextEdge ? nextEdge.to : null;
+
+                // Checkpoint loop step
+                await globalCheckpointer.saveCheckpoint(threadId, `graph_step_${currentAgentId}`, {
+                    currentState,
+                    executed: Array.from(executed),
+                    currentAgentId: nextAgentId,
+                    blackboard
+                });
+                
+                currentAgentId = nextAgentId;
+            } else {
+                // Find next node
+                const nextEdge = executionPlan.find(e => e.from === currentAgentId);
+                currentAgentId = nextEdge ? nextEdge.to : null;
             }
-            
-            // Find next node
-            const nextEdge = executionPlan.find(e => e.from === currentAgentId);
-            currentAgentId = nextEdge ? nextEdge.to : null;
             
             if (currentAgentId && executed.has(currentAgentId)) {
                 break; // avoid basic loops in this naive implementation
@@ -347,16 +406,28 @@ If you find a meta-rule, return it in this format: "SYSTEM_OPTIMIZATION: [Rule]"
     private async runEventDriven(task: any, config: WorkflowConfig, threadId: string) {
         if (!config.events) throw new Error("Events configuration required for EVENT_DRIVEN.");
         const blackboard = config.blackboard || {};
-        
         const agentMap = new Map(config.agents.map(a => [a.card.id, a]));
+        
         let resultState = task;
         
         // Simulating an event loop for maxIterations
         const startEvent = 'START_EVENT';
-        const eventQueue: string[] = [startEvent];
+        let eventQueue: string[] = [startEvent];
         const iterations = config.maxIterations || 5;
+        let currentIteration = 0;
+
+        // Hydrate from checkpointer if possible
+        const checkpoint = await globalCheckpointer.getLatestCheckpoint(threadId);
+        if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('event_step_')) {
+            resultState = checkpoint.state.resultState;
+            eventQueue = checkpoint.state.eventQueue;
+            currentIteration = checkpoint.state.currentIteration;
+            const cleanBlackboard = JSON.parse(JSON.stringify(checkpoint.state.blackboard || {}));
+            Object.assign(blackboard, cleanBlackboard);
+            console.log(`[Checkpointer] Resuming EVENT_DRIVEN at iteration: ${currentIteration}`);
+        }
         
-        for (let i = 0; i < iterations && eventQueue.length > 0; i++) {
+        for (let i = currentIteration; i < iterations && eventQueue.length > 0; i++) {
             const currentEvent = eventQueue.shift()!;
             const listeners = config.events[currentEvent] || [];
             
@@ -379,6 +450,14 @@ If you find a meta-rule, return it in this format: "SYSTEM_OPTIMIZATION: [Rule]"
                     }
                 }
             }
+
+            // Checkpoint state
+            await globalCheckpointer.saveCheckpoint(threadId, `event_step_${i}`, {
+                resultState,
+                eventQueue,
+                currentIteration: i + 1,
+                blackboard
+            });
         }
         
         return { status: 'completed_or_max_iterations', finalState: resultState };
@@ -418,9 +497,19 @@ If you find a meta-rule, return it in this format: "SYSTEM_OPTIMIZATION: [Rule]"
         let currentStatus = 'Active';
         let iterations = 0;
         
-        // Initialize blackboard with task if empty
-        if (!blackboard.objective) blackboard.objective = task;
-        if (!blackboard.contributions) blackboard.contributions = [];
+        // Hydrate from checkpointer if possible
+        const checkpoint = await globalCheckpointer.getLatestCheckpoint(threadId);
+        if (checkpoint && checkpoint.stepId && checkpoint.stepId.startsWith('swarm_step_')) {
+            currentStatus = checkpoint.state.currentStatus;
+            iterations = checkpoint.state.iterations;
+            const cleanBlackboard = JSON.parse(JSON.stringify(checkpoint.state.blackboard || {}));
+            Object.assign(blackboard, cleanBlackboard);
+            console.log(`[Checkpointer] Resuming DECENTRALIZED_SWARM at iteration: ${iterations}`);
+        } else {
+            // Initialize blackboard with task if empty
+            if (!blackboard.objective) blackboard.objective = task;
+            if (!blackboard.contributions) blackboard.contributions = [];
+        }
 
         while (currentStatus === 'Active' && iterations < maxIterations) {
             iterations++;
@@ -454,6 +543,12 @@ Agent ${agent.card.name}, evaluate the current state.
                     });
                 }
             }
+            
+            await globalCheckpointer.saveCheckpoint(threadId, `swarm_step_${iterations}`, {
+                currentStatus,
+                iterations,
+                blackboard: JSON.parse(JSON.stringify(blackboard)) // Deep copy snapshot
+            });
             
             globalEventStore.append({
                 type: 'SYSTEM_HOOK',
@@ -592,7 +687,7 @@ Agent ${agent.card.name}, evaluate the current state.
             try {
                 const result = await this.executeAgentTask(a, task, threadId, blackboard);
                 return { name: a.card.name, status: 'SUCCESS', result };
-            } catch (err) {
+            } catch (err: any) {
                 console.warn(`[MOA] Expert ${a.card.name} failed: ${err.message}`);
                 return { name: a.card.name, status: 'FAILED', error: err.message };
             }
@@ -614,60 +709,149 @@ IMPORTANT: If an agent failed (CRITICAL_FAILURE), do not ignore it. Acknowledge 
     }
 
     private async executeAgentTask(agent: BaseAgent, task: any, threadId: string, blackboard?: Record<string, any>): Promise<any> {
-        let currentTask = task;
-        const startTime = Date.now();
+        // --- RELIABILITY: CYCLE DETECTION ---
+        const chain = this.activeDependencyChains.get(threadId) || [];
         
-        // Inject blackboard context if available and relevant
-        if (blackboard && Object.keys(blackboard).length > 0) {
-            const blackboardContext = `\n\n[GLOBAL_BLACKBOARD_CONTEXT]: ${JSON.stringify(blackboard)}`;
-            if (typeof currentTask === 'string') {
-                currentTask += blackboardContext;
-            } else if (typeof currentTask === 'object') {
-                currentTask.blackboard = blackboard;
-            }
+        const chainCount = chain.filter(c => c === agent.card.id).length;
+        if (chainCount > 100) {
+            const deadlockError = `Conversational Deadlock Detected: Agent ${agent.card.id} is deeply nested or overloaded.`;
+            globalEventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'ORCHESTRATOR', threadId, payload: { error: deadlockError } });
+            throw new Error(deadlockError);
+        }
+        
+        if (chain.length >= this.MAX_CONVERSATIONAL_DEPTH) {
+            throw new Error(`Maximum conversational depth reached (${this.MAX_CONVERSATIONAL_DEPTH}). Terminating branch for reliability.`);
         }
 
+        this.activeDependencyChains.set(threadId, [...chain, agent.card.id]);
+        
+        const useDistributedQueue = blackboard?._useDistributedQueue === true;
+        
         try {
-            try {
-                currentTask = await globalPluginRegistry.emitBeforeAgentExecute(agent.card.id, currentTask, threadId);
-            } catch (e: any) {
-                if (e.name === 'CacheHitException') {
-                    // Cache Hit! Short-circuit LLM.
-                    globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'SEMANTIC_CACHE', threadId, payload: { action: 'TASK_CACHE_HIT' } });
-                    return e.cachedResponse;
+            if (useDistributedQueue) {
+                globalEventStore.append({
+                    type: 'SYSTEM_HOOK',
+                    sourceAgentId: 'ORCHESTRATOR',
+                    threadId,
+                    payload: { from: 'Local', to: 'QueueBroker', message: `Dispatching to Distributed Queue for ${agent.card.name}` }
+                });
+
+                const publishPromise = globalQueueBroker.publish({
+                    taskId: `task_${Date.now()}_${crypto.randomUUID().substring(0, 8)}`,
+                    threadId,
+                    agentId: agent.card.id,
+                    agentConfig: agent.card,
+                    payload: task,
+                    blackboard
+                });
+
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error(`Distributed task timed out for agent ${agent.card.name}`)), 300000)
+                );
+
+                const result: any = await Promise.race([publishPromise, timeoutPromise]);
+
+                if (result.status === 'error') {
+                    globalEventStore.append({
+                        type: 'ERROR_THROWN',
+                        sourceAgentId: 'ORCHESTRATOR',
+                        threadId,
+                        payload: { error: `Distributed worker failed for agent ${agent.card.name}: ${result.error}` }
+                    });
+                    throw new Error(`Distributed worker failed for agent ${agent.card.name}: ${result.error}`);
                 }
-                throw e;
-            }
-            
-            let result = await agent.execute(currentTask, threadId);
-            
-            result = await globalPluginRegistry.emitAfterAgentExecute(agent.card.id, currentTask, result, threadId);
-            
-            const duration = Date.now() - startTime;
-            globalEventStore.append({
-                type: 'SYSTEM_HOOK',
-                sourceAgentId: agent.card.id,
-                threadId,
-                payload: { action: 'AGENT_EXECUTION_COMPLETED', duration, status: 'SUCCESS' }
-            });
 
-            await this.consolidateAgentLearning(agent, currentTask, result, null, threadId);
-            return result;
-        } catch (error: any) {
-            const duration = Date.now() - startTime;
-            globalEventStore.append({
-                type: 'SYSTEM_HOOK',
-                sourceAgentId: agent.card.id,
-                threadId,
-                payload: { action: 'AGENT_EXECUTION_COMPLETED', duration, status: 'FAILED', error: error.message }
-            });
-
-            const recovery = await globalPluginRegistry.emitOnAgentFault(agent.card.id, error, currentTask, threadId);
-            if (recovery && recovery.recovered) {
-                return recovery.result; // the plugin successfully self-healed the agent execution
+                return result.result;
             }
-            await this.consolidateAgentLearning(agent, currentTask, null, error, threadId);
-            throw error;
+
+            let currentTask = task;
+            const startTime = Date.now();
+            
+            // Inject blackboard context if available and relevant (Dimension 01-04 Secure Communication)
+            if (blackboard && Object.keys(blackboard).length > 0) {
+                const serializedBB = JSON.stringify(blackboard);
+                
+                // Security Guard: Prevent Token Exhaustion DDoS via blackboard flooding
+                if (serializedBB.length > 50000) {
+                     console.warn(`[ORCHESTRATOR] Blackboard size of ${serializedBB.length} exceeds safety limit. Truncating for agent ${agent.card.name}.`);
+                }
+
+                const blackboardContext = Sanitizer.wrapSterile(
+                    serializedBB.substring(0, 50000), 
+                    'GLOBAL_BLACKBOARD_UNTRUSTED_CONTENT'
+                );
+
+                if (typeof currentTask === 'string') {
+                    currentTask += `\n\n${blackboardContext}`;
+                } else if (typeof currentTask === 'object') {
+                    currentTask.blackboard = blackboard; // Internal objects are trusted
+                }
+            }
+
+            try {
+                try {
+                    currentTask = await globalPluginRegistry.emitBeforeAgentExecute(agent.card.id, currentTask, threadId);
+                } catch (e: any) {
+                    if (e.name === 'CacheHitException') {
+                        // Cache Hit! Short-circuit LLM.
+                        TelemetrySystem.emit('SEMANTIC_CACHE', threadId, {
+                            action: 'TASK_CACHE_HIT',
+                            category: 'PERFORMANCE'
+                        });
+                        return e.cachedResponse;
+                    }
+                    throw e;
+                }
+                
+                // Execute within execution context for RBAC & Secret bindings
+                let contextConfig = {
+                    tenantId: blackboard?._tenantId || 'GLOBAL', 
+                    agentId: agent.card.id,
+                    threadId,
+                    capabilities: agent.card.capabilities
+                };
+                
+                const { runWithContext } = await import('../core/ExecutionContext.ts');
+
+                // --- RELIABILITY: TIMEOUT WRAPPER ---
+                let result = await globalCircuitBreaker.execute(async () => {
+                    return await runWithContext(contextConfig, async () => {
+                        return await agent.execute(currentTask, threadId);
+                    });
+                }, undefined, this.MAX_SILENCE_TIMEOUT_MS);
+                
+                result = await globalPluginRegistry.emitAfterAgentExecute(agent.card.id, currentTask, result, threadId);
+                
+                const duration = Date.now() - startTime;
+                globalEventStore.append({
+                    type: 'SYSTEM_HOOK',
+                    sourceAgentId: agent.card.id,
+                    threadId,
+                    payload: { action: 'AGENT_EXECUTION_COMPLETED', duration, status: 'SUCCESS' }
+                });
+
+                await this.consolidateAgentLearning(agent, currentTask, result, null, threadId);
+                return result;
+            } catch (error: any) {
+                const duration = Date.now() - startTime;
+                globalEventStore.append({
+                    type: 'SYSTEM_HOOK',
+                    sourceAgentId: agent.card.id,
+                    threadId,
+                    payload: { action: 'AGENT_EXECUTION_COMPLETED', duration, status: 'FAILED', error: error.message }
+                });
+
+                const recovery = await globalPluginRegistry.emitOnAgentFault(agent.card.id, error, currentTask, threadId);
+                if (recovery && recovery.recovered) {
+                    return recovery.result;
+                }
+                await this.consolidateAgentLearning(agent, currentTask, null, error, threadId);
+                throw error;
+            }
+        } finally {
+            // Pop from dependency chain when execution (successful or failed) finishes
+            const currentChain = this.activeDependencyChains.get(threadId) || [];
+            this.activeDependencyChains.set(threadId, currentChain.filter(id => id !== agent.card.id));
         }
     }
 

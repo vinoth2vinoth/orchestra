@@ -2,6 +2,7 @@ export interface OptimizationConfig {
     maxContextTokens?: number;
     toolOutputLimit?: number;
     summarizeAfterCount?: number;
+    disableSummarization?: boolean;
 }
 
 export class ContextOptimizer {
@@ -36,11 +37,16 @@ export class ContextOptimizer {
      * Optimizes the message array to ensure it fits within thresholds.
      * Implements Long-Term Summary strategy and Tool Output Compression.
      */
-    public static optimizeMessages(messages: any[], config: OptimizationConfig = {}): any[] {
+    public static async optimizeMessages(
+        messages: any[], 
+        config: OptimizationConfig = {}, 
+        summarizer?: (history: any[]) => Promise<string>
+    ): Promise<any[]> {
         const {
             maxContextTokens = 100000,
             toolOutputLimit = 2000,
-            summarizeAfterCount = 20
+            summarizeAfterCount = 20,
+            disableSummarization = false
         } = config;
 
         let totalTokens = 0;
@@ -69,20 +75,22 @@ export class ContextOptimizer {
             }
 
             const msgTokens = this.estimateTokens(JSON.stringify(msg));
-            if (totalTokens + msgTokens > maxContextTokens) {
-                // Prepend an injected long term memory summary of truncated parts conceptually
-                // In an advanced implementation, we'd use another LLM call to summarize.
-                // Here we inject an implicit truncation marker to prevent pollution.
+            if (totalTokens + msgTokens > maxContextTokens || (messages.length - i > summarizeAfterCount && i !== 0)) {
+                // If we have a summarizer, use it on the omitted portion
+                let summary = "Earlier interactions were compressed to maintain stability.";
+                
+                if (summarizer && !disableSummarization) {
+                    try {
+                        const omittedHistory = messages.slice(0, i + 1);
+                        summary = await summarizer(omittedHistory);
+                    } catch (e) {
+                        console.error("Context Summarization Failed:", e);
+                    }
+                }
+
                 optimized.unshift({
                     role: 'system',
-                    content: `[LONG_TERM_MEMORY_SUMMARY]: Earlier interactions exceeded context bounds (${maxContextTokens} tokens) and were compressed/truncated to maintain stability.`
-                });
-                break;
-            } else if (messages.length - i > summarizeAfterCount && i !== 0) {
-                 // Summarize older messages if history is too long (over count limit)
-                 optimized.unshift({
-                    role: 'system',
-                    content: `[LONG_TERM_MEMORY_SUMMARY]: Older contextual interactions omitted due to dense buffer scaling.`
+                    content: `[LONG_TERM_MEMORY_SUMMARY]: ${summary}`
                 });
                 break;
             }
@@ -102,5 +110,24 @@ export class ContextOptimizer {
         }
 
         return optimized;
+    }
+
+    /**
+     * Final safety valve: Synchronously truncates messages to a hard token limit.
+     * Use this just before the final LLM call if necessary.
+     */
+    public static hardTruncate(messages: any[], maxTokens: number): any[] {
+        let currentTokens = 0;
+        const result: any[] = [];
+        
+        // Always keep newest messages
+        for (let i = messages.length - 1; i >= 0; i--) {
+            const msgTokens = this.estimateTokens(JSON.stringify(messages[i]));
+            if (currentTokens + msgTokens > maxTokens) break;
+            result.unshift(messages[i]);
+            currentTokens += msgTokens;
+        }
+        
+        return result;
     }
 }

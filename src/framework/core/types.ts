@@ -12,7 +12,15 @@ export type EventType =
     | 'CONSENSUS_VOTE'
     | 'WORKFLOW_COMPLETED'
     | 'SYSTEM_HOOK'
+    | 'TELEMETRY_EMIT'
     | 'HUMAN_INTERVENTION_REQUIRED';
+
+export interface TelemetryPayload {
+    action: string;
+    category: 'PERFORMANCE' | 'SECURITY' | 'LLM_USAGE' | 'AGENT_LOGIC' | 'GOVERNANCE' | 'EXTERNAL_COST';
+    metrics?: Record<string, number>;
+    metadata?: Record<string, any>;
+}
 
 export interface FrameworkEvent {
     id: string;

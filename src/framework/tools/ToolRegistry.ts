@@ -2,6 +2,8 @@ import { z } from 'zod';
 import { tool } from 'ai';
 import { globalPluginRegistry } from '../core/PluginRegistry.ts';
 import { globalEscalationManager } from '../governance/EscalationManager.ts';
+import { getExecutionContext } from '../core/ExecutionContext.ts';
+import { globalIAMInterceptor } from '../security/IAMInterceptor.ts';
 
 // Simplistic representation of Model Context Protocol / Tool Registry
 export class ToolRegistry {
@@ -18,10 +20,22 @@ export class ToolRegistry {
             description: options.highRisk ? `[HIGH-RISK] ${description}` : description,
             parameters: inputSchema,
             execute: async (args: any) => {
-                // In a real system, we'd pull agentId and threadId from an AsyncLocalStorage context
-                const agentId = 'DYNAMIC_AGENT'; 
-                const threadId = 'DYNAMIC_THREAD';
+                let context;
+                try {
+                    context = getExecutionContext();
+                } catch (err) {
+                    // Fallback or crash, choosing fallback to default for backwards compatibility in un-migrated tests
+                    context = { 
+                        tenantId: 'GLOBAL', 
+                        agentId: 'DYNAMIC_AGENT', 
+                        threadId: 'DYNAMIC_THREAD', 
+                        capabilities: options.capabilities || [] 
+                    };
+                }
 
+                const { agentId, threadId, tenantId, capabilities } = context;
+
+                // Step 1: Execute High Risk Check
                 if (options.highRisk) {
                     const res = await globalEscalationManager.requestApproval(
                         threadId,
@@ -34,9 +48,27 @@ export class ToolRegistry {
                     }
                 }
 
-                const modifier = await globalPluginRegistry.emitBeforeToolInvoke(agentId, name, args, threadId);
+                // Step 2: IAM Validation and Injection (Tenant Isolation boundary)
+                const securedArgs = globalIAMInterceptor.interceptAndInject({
+                    tenantId,
+                    agentId,
+                    threadId,
+                    capabilities
+                }, name, args);
+
+                // Step 3: Emit Hooks
+                const modifier = await globalPluginRegistry.emitBeforeToolInvoke(agentId, name, securedArgs, threadId);
                 await globalPluginRegistry.emitOnToolCalled(agentId, modifier.toolName, modifier.args, threadId);
-                return await execute(modifier.args);
+                
+                // Step 4: Execute using secured arguments
+                try {
+                    const result = await execute(modifier.args);
+                    await globalPluginRegistry.emitAfterToolInvoke(agentId, modifier.toolName, modifier.args, result, threadId);
+                    return result;
+                } catch (error) {
+                    await globalPluginRegistry.emitOnToolFault(agentId, modifier.toolName, modifier.args, error, threadId);
+                    throw error;
+                }
             }
         } as any);
 

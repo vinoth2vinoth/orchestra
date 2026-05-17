@@ -18,6 +18,8 @@ interface VectorMemoryEntry extends MemoryEntry {
 export class MemoryMesh {
     private memories: VectorMemoryEntry[] = [];
     private tfidf = new TfIdf();
+    private searchCache: Map<string, VectorMemoryEntry[]> = new Map();
+    private coldMemories: VectorMemoryEntry[] = [];
     
     // GraphRAG Structures
     private graphEdges: Array<{ source: string, target: string, relation: string, weight: number, tenantId?: string }> = [];
@@ -39,16 +41,19 @@ export class MemoryMesh {
 
     public updateCoreMemory(contextId: string, block: 'persona' | 'human', content: string, append: boolean = false) {
         const state = this.getCoreMemory(contextId);
+        const MAX_BLOCK_SIZE = 10000;
+        
         if (append) {
-            state[block] += '\n' + content;
+            const nextVal = state[block] + '\n' + content;
+            state[block] = nextVal.substring(0, MAX_BLOCK_SIZE);
         } else {
-            state[block] = content;
+            state[block] = content.substring(0, MAX_BLOCK_SIZE);
         }
         globalEventStore.append({
             type: 'MEMORY_STORED',
             sourceAgentId: 'SYSTEM_MEMORY_MESH',
             threadId: contextId,
-            payload: { action: 'CORE_MEMORY_UPDATE', block, content, append }
+            payload: { action: 'CORE_MEMORY_UPDATE', block, content: content.substring(0, 100), append }
         });
     }
 
@@ -91,10 +96,18 @@ export class MemoryMesh {
 
     private async store(tier: MemoryTier, content: any, metadata: Record<string, any>, vectorize = false, tenantId?: string) {
         const now = Date.now();
+        
+        // Safety Guard: Limit size of individual memory entries
+        let finalContent = content;
+        if (typeof content === 'string' && content.length > 20000) {
+            console.warn(`[MemoryMesh] Truncating memory entry of size ${content.length}`);
+            finalContent = content.substring(0, 20000) + '... [TRUNCATED]';
+        }
+
         this.memories.push({
             id: crypto.randomUUID(),
             tier,
-            content,
+            content: finalContent,
             timestamp: now,
             metadata,
             tenantId,
@@ -102,8 +115,8 @@ export class MemoryMesh {
             lastAccessed: now
         });
 
-        if (vectorize && typeof content === 'string') {
-            this.tfidf.addDocument(content);
+        if (vectorize && typeof finalContent === 'string') {
+            this.tfidf.addDocument(finalContent);
         } else {
             // Add a placeholder to keep indices aligned
             this.tfidf.addDocument("");
@@ -114,6 +127,11 @@ export class MemoryMesh {
      * Search across Semantic and Procedural memories (Local TF-IDF Integration)
      */
     public async searchSimilarMemories(query: string, topK: number = 3, tenantId?: string): Promise<VectorMemoryEntry[]> {
+        const cacheKey = `${query}:${topK}:${tenantId || 'GLOBAL'}`;
+        if (this.searchCache.has(cacheKey)) {
+            return this.searchCache.get(cacheKey)!;
+        }
+
         const scoredEntries: { memory: VectorMemoryEntry; score: number }[] = [];
         const now = Date.now();
         
@@ -144,6 +162,11 @@ export class MemoryMesh {
         scoredEntries.sort((a, b) => b.score - a.score);
         const topResults = scoredEntries.slice(0, topK).map(res => res.memory);
         
+        // Cache the result
+        this.searchCache.set(cacheKey, topResults);
+        // Prune cache if too large
+        if (this.searchCache.size > 100) this.searchCache.delete(this.searchCache.keys().next().value);
+
         // Update access count and lastAccessed timestamp
         for (const memory of topResults) {
             memory.accessCount = (memory.accessCount || 1) + 1;
@@ -174,9 +197,11 @@ export class MemoryMesh {
                         type: 'MEMORY_STORED',
                         sourceAgentId: 'SYSTEM_MEMORY_MESH',
                         threadId: 'GLOBAL',
-                        payload: { action: 'GARBAGE_COLLECT', memoryId: m.id, retention }
+                        payload: { action: 'COLD_STORAGE_MOVE', memoryId: m.id, retention }
                     });
                     
+                    m.tier = 'COLD' as any;
+                    this.coldMemories.push(m);
                     this.memories[i] = null as any; // Tombstone
                     needsRebuild = true;
                 }
@@ -241,6 +266,7 @@ export class MemoryMesh {
 
     private rebuildVectorIndex() {
         this.memories = this.memories.filter(m => m !== null);
+        this.searchCache.clear(); // Clear cache when index changes
         
         this.tfidf = new TfIdf();
         for (const m of this.memories) {
@@ -281,7 +307,7 @@ export class MemoryMesh {
     }
 
     public retrieveContext(tier: MemoryTier, queryMetadata: Record<string, any>): MemoryEntry[] {
-        // Naive implementation for now. Production uses RAG / Embeddings / Graph Traversal.
+        // ... same as before
         return this.memories.filter(m => {
             if (m.tier !== tier) return false;
             for (const key in queryMetadata) {
@@ -291,3 +317,5 @@ export class MemoryMesh {
         });
     }
 }
+
+export const globalMemoryMesh = new MemoryMesh();

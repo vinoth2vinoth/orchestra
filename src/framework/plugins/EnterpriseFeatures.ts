@@ -1,5 +1,6 @@
 import { AgenticPlugin, CacheHitException, HumanApprovalRequiredException, globalPluginRegistry } from '../core/PluginRegistry.js';
 import { globalEventStore } from '../core/EventStore.js';
+import { TelemetrySystem } from '../telemetry/TelemetrySystem.js';
 import crypto from 'crypto';
 
 // 1. Data Loss Prevention (DLP) - Security Governance
@@ -44,6 +45,13 @@ export class TokenBudgetPlugin implements AgenticPlugin {
 
     constructor(private globalLimit: number = 250000) {}
 
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+        let b = this.budgets.get(threadId);
+        if (b && b.used > b.limit * 0.98) { // 2% buffer for the next call
+            throw new Error(`Enterprise Governance: Token quota nearly exhausted (98%+). Halting before next call for thread ${threadId}. Used: ${b.used}, Limit: ${b.limit}`);
+        }
+    }
+
     async onLLMResponse(agentId: string, response: any, usage: any, threadId: string) {
         if (!usage) return;
         const tokens = (usage.promptTokens || 0) + (usage.completionTokens || 0);
@@ -54,7 +62,11 @@ export class TokenBudgetPlugin implements AgenticPlugin {
         this.budgets.set(threadId, b);
 
         if (b.used > b.limit) {
-            globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'GOVERNANCE', threadId, payload: { action: 'QUOTA_EXCEEDED', used: b.used, limit: b.limit } });
+            TelemetrySystem.emit('GOVERNANCE', threadId, {
+                action: 'QUOTA_EXCEEDED',
+                category: 'GOVERNANCE',
+                metadata: { used: b.used, limit: b.limit }
+            });
             throw new Error(`Enterprise Governance: Token quota exceeded for thread ${threadId}. Used: ${b.used}, Limit: ${b.limit}`);
         }
     }
@@ -94,11 +106,10 @@ export class AuditTrailPlugin implements AgenticPlugin {
         const entry = `${Date.now()}|${threadId}|${agentId}|${toolName}|${JSON.stringify(args)}|${this.previousHash}`;
         this.previousHash = crypto.createHash('sha256').update(entry).digest('hex');
         
-        globalEventStore.append({
-            type: 'SYSTEM_HOOK',
-            sourceAgentId: 'SECURE_AUDIT',
-            threadId,
-            payload: { action: 'AUDIT_LOG_APPENDED', hash: this.previousHash, tool: toolName }
+        TelemetrySystem.emit('SECURE_AUDIT', threadId, {
+            action: 'AUDIT_LOG_APPENDED',
+            category: 'SECURITY',
+            metadata: { hash: this.previousHash, tool: toolName }
         });
     }
 }
@@ -112,10 +123,31 @@ export class MetricsExportPlugin implements AgenticPlugin {
         totalLLMCalls: 0,
         totalTokensUsed: 0,
         toolInvocations: 0,
-        agentExecutions: 0
+        agentExecutions: 0,
+        avgLatencyMs: 0,
+        totalLatencyMs: 0,
+        lastLatencyMs: 0
     };
 
-    async beforeAgentExecute() { MetricsExportPlugin.metrics.agentExecutions++; }
+    private startTimes = new Map<string, number>();
+
+    async beforeAgentExecute(agentId: string, task: any, threadId: string) { 
+        MetricsExportPlugin.metrics.agentExecutions++; 
+        this.startTimes.set(`${threadId}_${agentId}`, Date.now());
+    }
+
+    async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
+        const start = this.startTimes.get(`${threadId}_${agentId}`);
+        if (start) {
+            const lat = Date.now() - start;
+            MetricsExportPlugin.metrics.lastLatencyMs = lat;
+            MetricsExportPlugin.metrics.totalLatencyMs += lat;
+            // Running average
+            MetricsExportPlugin.metrics.avgLatencyMs = MetricsExportPlugin.metrics.totalLatencyMs / MetricsExportPlugin.metrics.agentExecutions;
+            this.startTimes.delete(`${threadId}_${agentId}`);
+        }
+    }
+
     async onToolCalled() { MetricsExportPlugin.metrics.toolInvocations++; }
     async onLLMCall() { MetricsExportPlugin.metrics.totalLLMCalls++; }
     async onLLMResponse(a: string, r: any, usage: any) { 
@@ -170,7 +202,7 @@ export class ModelRouterPlugin implements AgenticPlugin {
         // Extremely basic heuristic: Route short tasks to a fast/cheap model, long tasks to a heavy/expensive model
         let newConfig = { ...llmConfig };
         if (totalTextLength < 500 && newConfig.provider === 'gemini') {
-            newConfig.modelName = 'gemini-1.5-flash';
+            newConfig.modelName = 'gemini-2.5-flash';
         } else if (newConfig.provider === 'gemini') {
             newConfig.modelName = 'gemini-1.5-pro';
         }
@@ -179,31 +211,160 @@ export class ModelRouterPlugin implements AgenticPlugin {
     }
 }
 
+import { globalOTelExporter } from '../telemetry/OTelExporter.ts';
+import { Span, SpanStatusCode } from '@opentelemetry/api';
+
 // 8. OpenTelemetry (OTel) Distributed Tracing Plugin
 export class OpenTelemetryTracingPlugin implements AgenticPlugin {
     name = 'OpenTelemetryTracingPlugin';
     version = '1.0.0';
-    private spans = new Map<string, number>();
+    
+    private agentSpans = new Map<string, { span: Span, startTime: number }>();
+    private toolSpans = new Map<string, { span: Span, startTime: number }>();
+    private llmSpans = new Map<string, { span: Span, startTime: number }>();
 
     async beforeAgentExecute(agentId: string, task: any, threadId: string) {
-        const spanId = `span_${threadId}_${agentId}_${Date.now()}`;
-        this.spans.set(spanId, Date.now());
-        console.log(`[OTel] Tracer: Started span ${spanId} for agent ${agentId}`);
-        globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'OTEL_TRACER', threadId, payload: { action: 'SPAN_START', spanId, agentId } });
+        const spanName = `Agent_Execute_${agentId}`;
+        const startTime = Date.now();
+        const span = globalOTelExporter.getTracer().startSpan(spanName, {
+            attributes: {
+                'agent_id': agentId,
+                'agent.id': agentId,
+                'thread.id': threadId,
+                'task.length': typeof task === 'string' ? task.length : JSON.stringify(task).length
+            }
+        });
+        
+        const spanKey = `${threadId}_${agentId}`;
+        this.agentSpans.set(spanKey, { span, startTime });
+        
+        globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'OTEL_TRACER', threadId, payload: { action: 'SPAN_START', spanId: spanKey, agentId } });
         return task;
     }
 
     async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
-        const spanKeys = Array.from(this.spans.keys()).filter(k => k.startsWith(`span_${threadId}_${agentId}`));
-        const latestSpan = spanKeys[spanKeys.length - 1];
-        if (latestSpan) {
-            const start = this.spans.get(latestSpan)!;
-            const durationMs = Date.now() - start;
-            console.log(`[OTel] Tracer: Ended span ${latestSpan} for agent ${agentId} - Duration: ${durationMs}ms`);
-            globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'OTEL_TRACER', threadId, payload: { action: 'SPAN_END', spanId: latestSpan, agentId, durationMs } });
-            this.spans.delete(latestSpan);
+        const key = `${threadId}_${agentId}`;
+        const spanData = this.agentSpans.get(key);
+        if (spanData) {
+            const { span, startTime } = spanData;
+            const latency_ms = Date.now() - startTime;
+            span.setAttribute('latency_ms', latency_ms);
+            span.setAttribute('result.length', typeof result === 'string' ? result.length : JSON.stringify(result).length);
+            span.end();
+            this.agentSpans.delete(key);
+            
+            globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'OTEL_TRACER', threadId, payload: { action: 'SPAN_END', spanId: key, agentId, durationMs: latency_ms } });
         }
         return result;
+    }
+
+    async onAgentFault(agentId: string, error: any, task: any, threadId: string) {
+        const key = `${threadId}_${agentId}`;
+        const spanData = this.agentSpans.get(key);
+        if (spanData) {
+            const { span, startTime } = spanData;
+            const latency_ms = Date.now() - startTime;
+            span.recordException(error);
+            span.setAttribute('latency_ms', latency_ms);
+            span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: error.message
+            });
+            span.end();
+            this.agentSpans.delete(key);
+        }
+    }
+
+    async beforeToolInvoke(agentId: string, toolName: string, args: any, threadId: string) {
+        const spanName = `Tool_Invoke_${toolName}`;
+        const startTime = Date.now();
+        const span = globalOTelExporter.getTracer().startSpan(spanName, {
+            attributes: {
+                'agent_id': agentId,
+                'agent.id': agentId,
+                'tool_name': toolName,
+                'tool.name': toolName,
+                'thread.id': threadId
+            }
+        });
+        
+        const key = `${threadId}_${agentId}_${toolName}`;
+        this.toolSpans.set(key, { span, startTime });
+        return undefined;
+    }
+
+    async onToolCalled(agentId: string, toolName: string, args: any, threadId: string) {
+        // We now wait for afterToolInvoke or onToolFault to end the span
+    }
+
+    async afterToolInvoke(agentId: string, toolName: string, args: any, result: any, threadId: string) {
+        const key = `${threadId}_${agentId}_${toolName}`;
+        const spanData = this.toolSpans.get(key);
+        if (spanData) {
+            const { span, startTime } = spanData;
+            const latency_ms = Date.now() - startTime;
+            span.setAttribute('latency_ms', latency_ms);
+            span.setStatus({ code: SpanStatusCode.OK });
+            if (result && typeof result === 'object' && result.error) {
+                span.recordException(new Error(String(result.error)));
+                span.setStatus({ code: SpanStatusCode.ERROR, message: String(result.error) });
+            }
+            span.end();
+            this.toolSpans.delete(key);
+        }
+    }
+
+    async onToolFault(agentId: string, toolName: string, args: any, error: any, threadId: string) {
+        const key = `${threadId}_${agentId}_${toolName}`;
+        const spanData = this.toolSpans.get(key);
+        if (spanData) {
+            const { span, startTime } = spanData;
+            const latency_ms = Date.now() - startTime;
+            span.setAttribute('latency_ms', latency_ms);
+            span.recordException(error);
+            span.setStatus({
+                code: SpanStatusCode.ERROR,
+                message: error.message
+            });
+            span.end();
+            this.toolSpans.delete(key);
+        }
+    }
+
+    async beforeLLMCall(agentId: string, llmConfig: any, messages: any[], threadId: string) {
+        const spanName = `LLM_Call_${llmConfig.provider || 'unknown'}`;
+        const startTime = Date.now();
+        const span = globalOTelExporter.getTracer().startSpan(spanName, {
+            attributes: {
+                'agent_id': agentId,
+                'agent.id': agentId,
+                'llm.provider': llmConfig.provider,
+                'llm.model': llmConfig.modelName || llmConfig.model,
+                'thread.id': threadId
+            }
+        });
+        const key = `${threadId}_${agentId}`;
+        this.llmSpans.set(key, { span, startTime });
+        return undefined;
+    }
+
+    async onLLMResponse(agentId: string, response: any, usage: any, threadId: string) {
+        const key = `${threadId}_${agentId}`;
+        const spanData = this.llmSpans.get(key);
+        if (spanData) {
+            const { span, startTime } = spanData;
+            const latency_ms = Date.now() - startTime;
+            
+            span.setAttribute('latency_ms', latency_ms);
+            span.setAttribute('llm.latency_ms', latency_ms);
+            if (usage) {
+                span.setAttribute('llm.usage.prompt_tokens', usage.promptTokens || 0);
+                span.setAttribute('llm.usage.completion_tokens', usage.completionTokens || 0);
+                span.setAttribute('llm.usage.total_tokens', (usage.promptTokens || 0) + (usage.completionTokens || 0));
+            }
+            span.end();
+            this.llmSpans.delete(key);
+        }
     }
 }
 
@@ -389,12 +550,11 @@ export class SelfHealingRetryPlugin implements AgenticPlugin {
     async onAgentFault(agentId: string, error: any, task: any, threadId: string) {
         console.warn(`[SelfHealing] Agent ${agentId} failed. Attempting autonomous reflexion...`);
         
-        globalEventStore.append({
-            type: 'SYSTEM_HOOK',
-            sourceAgentId: 'SELF_HEALING_ENGINE',
-            threadId,
-            payload: { action: 'REFLEXION_TRIGGERED', agentId, originalError: error.message }
-        });
+            TelemetrySystem.emit('SELF_HEALING_ENGINE', threadId, {
+                action: 'REFLEXION_TRIGGERED',
+                category: 'AGENT_LOGIC',
+                metadata: { agentId, originalError: error.message }
+            });
 
         const retryKey = `${threadId}_${agentId}`;
         let currentRetries = this.retries.get(retryKey) || 0;
@@ -845,7 +1005,7 @@ export class CircuitBreakerPlugin implements AgenticPlugin {
             } else {
                 // Reroute to fallback model
                 console.warn(`[CircuitBreaker] Circuit OPEN. Rerouting agent ${agentId} to high-availability fallback model.`);
-                return { llmConfig: { ...llmConfig, modelName: 'gemini-1.5-flash-8b', provider: 'gemini' } };
+                return { llmConfig: { ...llmConfig, modelName: 'gemini-2.5-flash-8b', provider: 'gemini' } };
             }
         }
     }
@@ -1037,11 +1197,10 @@ export class AutoReflectionCriticPlugin implements AgenticPlugin {
             if (hasFlaws && attempt < this.maxRetries) {
                 console.warn(`[AutoReflection] CriticAgent rejected execution for agent ${agentId}. Feedback: ${criticFeedback}. Triggering self-healing loop (Attempt ${attempt + 1}/${this.maxRetries})...`);
                 
-                globalEventStore.append({
-                    type: 'SYSTEM_HOOK',
-                    sourceAgentId: 'CRITIC_AGENT',
-                    threadId,
-                    payload: { action: 'CRITIQUE_FAILED', attempt: attempt + 1, feedback: criticFeedback }
+                TelemetrySystem.emit('CRITIC_AGENT', threadId, {
+                    action: 'CRITIQUE_FAILED',
+                    category: 'AGENT_LOGIC',
+                    metadata: { attempt: attempt + 1, feedback: criticFeedback }
                 });
 
                 // Simulate retry via orchestration by modifying the current result to a "CacheHitException" style synthetic response

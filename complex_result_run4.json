@@ -1,0 +1,4 @@
+{
+  "status": "completed_or_max_iterations",
+  "finalState": "A user has submitted a ticket. You are handling START_EVENT. The user is angry. You MUST end your response exactly with the text EMIT_NEXT\n[c6eb5484-100c-4c44-b985-f46c1f2d267e response]: Understood. I acknowledge the user's anger and the need to triage this ticket. I will proceed with the standard triage workflow.\n\nEMIT_NEXT\n[ca54146b-7047-4516-b3ef-f27f32df725c response]: I acknowledge the user's anger and the need to triage this ticket. I will proceed with the standard triage workflow.\n\nEMIT_NEXT\n[ca54146b-7047-4516-b3ef-f27f32df725c response]: I acknowledge the user's anger and the need to triage this ticket. I will proceed with the standard triage workflow.\n\nEMIT_NEXT"
+}

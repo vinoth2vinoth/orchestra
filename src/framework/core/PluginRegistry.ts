@@ -22,6 +22,8 @@ export interface AgenticPlugin {
     
     beforeToolInvoke?: (agentId: string, toolName: string, args: any, threadId: string) => Promise<{ toolName?: string, args?: any } | void>;
     onToolCalled?: (agentId: string, toolName: string, args: any, threadId: string) => Promise<void>;
+    afterToolInvoke?: (agentId: string, toolName: string, args: any, result: any, threadId: string) => Promise<void>;
+    onToolFault?: (agentId: string, toolName: string, args: any, error: any, threadId: string) => Promise<void>;
     
     onWorkflowSleep?: (threadId: string, state: any) => Promise<void>;
     onWorkflowResume?: (threadId: string, state: any) => Promise<void>;
@@ -85,6 +87,22 @@ class PluginRegistry {
         for (const plugin of this.plugins) {
             if (plugin.onToolCalled) {
                 await plugin.onToolCalled(agentId, toolName, args, threadId);
+            }
+        }
+    }
+
+    public async emitAfterToolInvoke(agentId: string, toolName: string, args: any, result: any, threadId: string): Promise<void> {
+        for (const plugin of this.plugins) {
+            if (plugin.afterToolInvoke) {
+                await plugin.afterToolInvoke(agentId, toolName, args, result, threadId);
+            }
+        }
+    }
+
+    public async emitOnToolFault(agentId: string, toolName: string, args: any, error: any, threadId: string): Promise<void> {
+        for (const plugin of this.plugins) {
+            if (plugin.onToolFault) {
+                await plugin.onToolFault(agentId, toolName, args, error, threadId);
             }
         }
     }
