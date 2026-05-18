@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, ChangeEvent, useMemo } from 'react';
-import { Settings, Play, Square, UserPlus, Trash2, Bot, CircleUserRound, Sparkles, ShieldAlert, Save, Upload, Download, AlertCircle, XCircle, Terminal, Database, History, Brain, Keyboard, Workflow, Activity, ZapOff, Folder, MessageSquare, Briefcase } from 'lucide-react';
+import { Settings, Play, Square, UserPlus, Trash2, Bot, CircleUserRound, Sparkles, ShieldAlert, Save, Upload, Download, AlertCircle, XCircle, Terminal, Database, History, Brain, Keyboard, Workflow, Activity, ZapOff, Folder, MessageSquare, Briefcase, Network } from 'lucide-react';
 import { TelemetryStudio } from './components/TelemetryStudio';
 import { AgentInspectorPane } from './components/AgentInspectorPane';
 import { ParadigmPlayground } from './components/ParadigmPlayground';
 import { CommandPalette, CommandAction } from './components/CommandPalette';
+import { ArchitectureOverview } from './components/ArchitectureOverview';
 import { Agent, ChatMessage, Edge } from './types';
 import { cn } from './lib/utils';
 import Markdown from 'react-markdown';
@@ -75,7 +76,7 @@ export default function App() {
   const [expandedAgents, setExpandedAgents] = useState<Set<string>>(new Set());
   const [showTimeline, setShowTimeline] = useState(false);
   const [showObservability, setShowObservability] = useState(false);
-  const [viewMode, setViewMode] = useState<'chat' | 'workspace' | 'projects'>('chat');
+  const [viewMode, setViewMode] = useState<'chat' | 'workspace' | 'projects' | 'architecture'>('chat');
 
   const endOfMessagesRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -534,6 +535,13 @@ CRITICAL CONTEXT:
          >
            <Folder className="w-5 h-5" />
          </button>
+         <button 
+           onClick={() => setViewMode('architecture')}
+           className={cn("p-2.5 rounded-xl transition-all", viewMode === 'architecture' ? "bg-amber-600/20 text-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.15)]" : "text-slate-500 hover:text-slate-300 hover:bg-slate-900")}
+           title="System Architecture Diagram"
+         >
+           <Network className="w-5 h-5" />
+         </button>
       </div>
 
       {/* Sidebar: Agents Configuration (Only visible in Chat mode) */}
@@ -769,6 +777,10 @@ CRITICAL CONTEXT:
 
       {viewMode === 'projects' && (
         <ProjectManager liveLogs={liveLogs} />
+      )}
+
+      {viewMode === 'architecture' && (
+        <ArchitectureOverview />
       )}
 
       {/* Main Chat Area */}

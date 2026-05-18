@@ -1,6 +1,6 @@
 <div align="center">
   
-<img src="./assets/hero-banner.svg" alt="Orchestra Banner" width="100%" />
+<img src="./src/assets/hero-banner.svg" alt="Orchestra Banner" width="100%" />
 <br />
 
 # 🎻 Orchestra: Enterprise AI Agent Framework
@@ -42,7 +42,7 @@ We designed Orchestra to solve the most prevalent challenges in current open-sou
 - **💾 State Checkpointing & Resume**: Multi-agent workflows can be fragile. Orchestra autosaves state to persistent storage. Pause, debug, and resume workflows seamlessly upon network failures or API rate limits.
 - **⚡ Background Autonomous Daemons**: Agents shouldn't block user interfaces. Orchestra dispatches background workers that poll task queues and autonomously execute work asynchronously.
 - **📉 LLM Token Optimization**: Through advanced sliding windows and Semantic Caching, Orchestra reduces repetitive token waste across deep multi-agent conversation threads.
-- **🔍 Full Observability & Telemetry**: Native OpenTelemetry bridging via an immutable robust EventStore. Monitor agent thought processes, tool calls, and API failures dynamically in real-time.
+- **🔍 Full Observability & Telemetry**: Native OpenTelemetry bridging via an immutable robust EventStore. Monitor agent thought processes, tool calls, and API failures dynamically in real-time via the built-in **Telemetry Studio**.
 
 ### 🛠️ Core Technology Stack
 
@@ -56,7 +56,7 @@ We designed Orchestra to solve the most prevalent challenges in current open-sou
 ## 🧠 How It Works (Architecture Overview)
 
 <div align="center">
-  <img src="./assets/architecture-diagram.svg" alt="Detailed Network Architecture Diagram" width="100%" />
+  <img src="./src/assets/architecture-diagram.svg" alt="Detailed Network Architecture Diagram" width="100%" />
 </div>
 
 <details>
@@ -82,6 +82,7 @@ graph TB
         I[Worker: Code Gen]
         J[Worker: Auditor]
         K[Worker: Researcher]
+        H2[Human-Help-Tool HITL]
     end
 
     subgraph Governance_Layer [Security & Validation]
@@ -111,6 +112,7 @@ graph TB
     H --> I & J & K
     
     I & J & K <--> L
+    I & J & K <--> H2
     L --> M --> N
     
     I & J & K -->|State Updates| P
@@ -126,14 +128,15 @@ graph TB
 
 </details>
 
-### 🏗️ The Four Pillars of Orchestra Architecture
+### 🏗️ The Five Pillars of Orchestra Architecture
 
-To achieve enterprise-grade reliability, Orchestra is built upon four fundamental architectural pillars:
+To achieve enterprise-grade reliability, Orchestra is built upon five fundamental architectural pillars:
 
 1.  **Distributed Control Plane**: The `Orchestrator` acts as a stateless brain, delegating high-level reasoning to the `Paradigm Router`. It doesn't execute code itself; instead, it coordinates the lifecycle of complex tasks across Swarm, Hierarchical, and Consensus-driven workflows.
 2.  **Autonomous Worker Pools**: Execution is entirely decoupled from the UI. `WorkerNodes` and `AutonomousDaemons` pull specialized tasks from the `Message Bus` (Pub/Sub). This allows the system to scale workers horizontally and recover from individual node failures without losing the global task context.
 3.  **Strict Governance & Tool Sandboxing**: Every tool an agent consumes is wrapped in a `Zod Schema`. The `Governance Engine` enforces RBAC (Role-Based Access Control) and resource budgets at the tool-call level, preventing unauthorized file system access or uncontrolled API spending.
 4.  **Idempotent State Rehydration**: Through `Persistent State Checkpoints`, Orchestra tracks the "thought history" of every agent. If a network error occurs or the process restarts, the Orchestrator can rehydrate the exact state and resume the task precisely where it left off.
+5.  **Deterministic Human-in-the-Loop (HITL)**: High-stakes operations (like deploying code or spending tokens over a certain threshold) trigger a `HumanHelpEvent`. This suspends the agent's execution thread in a "Pending Approval" state, allowing humans to audit the proposed action before it is committed.
 
 ---
 
@@ -206,12 +209,12 @@ We love the current open-source agent ecosystems, but Orchestra is specifically 
 
 Orchestra abstracts the LLM interface, allowing you to seamlessly swap out intelligence engines based on pricing, speed, and capability.
 
-- **Google Gemini** (`gemini-1.5-pro`, `gemini-1.5-flash`) - _Default_
-- **OpenAI** (`gpt-4o`, `gpt-4-turbo`)
-- **Anthropic** (`claude-3.5-sonnet`, `claude-3-opus`)
-- **Mistral** (`mistral-large`)
-- **Cohere** (`command-r-plus`)
-- **Groq & DeepSeek** (For ultra-low latency, open-source inference)
+- **Google Gemini** (`gemini-1.5-pro-002`, `gemini-1.5-flash-002`) - _Default_
+- **OpenAI** (`o1`, `o1-mini`, `gpt-4o`, `gpt-4o-mini`)
+- **Anthropic** (`claude-3.5-sonnet`, `claude-3.5-haiku`)
+- **Meta Llama** (`llama-3.2-90b`, `llama-3.1-405b`) - _via Groq / Together / Bedrock_
+- **Mistral** (`mistral-large-2407`, `pixtral-12b`)
+- **DeepSeek** (`deepseek-v3`, `deepseek-coder-v2`)
 
 Configure your preferred providers securely via the `.env` file.
 
@@ -255,15 +258,18 @@ Test Orchestra in your own local environment instantly.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/en/) (v18 or higher recommended)
-- Your own [Google Gemini API Key](https://aistudio.google.com/app/apikey) (or other compatible LLM provider key)
+- [Node.js](https://nodejs.org/en/) (v20 or higher recommended)
+- An API Key for a supported LLM provider:
+  - [Google Gemini API Key](https://aistudio.google.com/app/apikey) (Recommended for default setup)
+  - [OpenAI API Key](https://platform.openai.com/)
+  - [Anthropic API Key](https://console.anthropic.com/)
 
-### Step-by-Step Setup
+### 🚀 Step-by-Step Setup
 
 **1. Clone the repository**
 
 ```bash
-git clone https://github.com/your-username/orchestra-multi-agent-framework.git
+git clone https://github.com/vinoth2vinoth/orchestra-multi-agent-framework.git
 cd orchestra-multi-agent-framework
 ```
 
@@ -274,20 +280,26 @@ npm install
 ```
 
 **3. Configure Environment Variables**
-Copy the example environment template to protect your keys:
+Copy the example environment template and add your API keys. Orchestra supports multiple providers simultaneously for hybrid swarms.
 
 ```bash
 cp .env.example .env
 ```
 
-Open your newly created `.env` file and insert your API key:
+**4. Update .env with your credentials**
+Open your newly created `.env` file and insert your API keys:
 
 ```env
-GEMINI_API_KEY="your_api_key_here"
+# Primary Intelligence (Default)
+GEMINI_API_KEY="your_google_ai_studio_key"
+
+# Optional: Secondary Providers
+OPENAI_API_KEY="sk-..."
+ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
-**4. Start the Application**
-Launch the local Vite React development server alongside the orchestrated backend simulation.
+**5. Start the Application**
+Launch the production-ready dev server which handles both the React dashboard and the background Orchestrator.
 
 ```bash
 npm run dev

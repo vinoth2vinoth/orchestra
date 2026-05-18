@@ -1,0 +1,2 @@
+{"timestamp":1779070481586,"threadId":"TEST_1779070481582","agentId":"mgr","action":"AGENT_EXECUTION_START","description":"Agent Manager started task execution under paradigm HIERARCHICAL","hash":"1e15dce3df8c3d4bb29181c55c9619126f58b6195433bc79dc5f9c55ce958e49"}
+{"timestamp":1779070481590,"threadId":"TEST_1779070481588","agentId":"judge","action":"AGENT_EXECUTION_START","description":"Agent Judge started task execution under paradigm CONSENSUS","hash":"05747ad9a2a6140de5311d494b41b8768f7cd83a2a3fa52709293ed8ba83f212"}

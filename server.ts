@@ -159,6 +159,14 @@ async function startServer() {
       });
   });
 
+  // Governance Audit Stream (Dimension 05)
+  app.get('/api/governance/audit', (req, res) => {
+      const logs = globalEventStore.getLogs()
+          .filter(l => l.sourceAgentId === 'GOVERNANCE' || l.payload?.action?.includes('POLICY') || l.type === 'SYSTEM_HOOK')
+          .slice(-50);
+      res.json({ auditTrail: logs });
+  });
+
   // --- Workspace File Management APIs ---
   const workspaceRoot = path.join(process.cwd(), 'workspace');
   

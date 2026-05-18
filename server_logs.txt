@@ -50,3 +50,7 @@
 [2026-05-17T19:33:22.650Z] Calling generateText with model: gpt-4o (apikey: missing)
 [2026-05-17T19:33:22.716Z] generateText FAILED: OpenAI API key is missing. Pass it using the 'apiKey' parameter or the OPENAI_API_KEY environment variable.
 [2026-05-17T19:33:22.716Z] generateText FAILED: OpenAI API key is missing. Pass it using the 'apiKey' parameter or the OPENAI_API_KEY environment variable.
+[2026-05-18T02:14:41.617Z] Calling generateText with model: gpt-4o (apikey: missing)
+[2026-05-18T02:14:41.660Z] Calling generateText with model: gpt-4o (apikey: missing)
+[2026-05-18T02:14:41.735Z] generateText FAILED: OpenAI API key is missing. Pass it using the 'apiKey' parameter or the OPENAI_API_KEY environment variable.
+[2026-05-18T02:14:41.735Z] generateText FAILED: OpenAI API key is missing. Pass it using the 'apiKey' parameter or the OPENAI_API_KEY environment variable.
