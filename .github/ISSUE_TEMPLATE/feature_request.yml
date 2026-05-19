@@ -1,0 +1,40 @@
+name: Feature request
+description: Propose a user-facing capability or developer experience improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or contributor pain does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the behavior, API, or workflow you want.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Area
+      options:
+        - Agents
+        - Orchestration
+        - Tools
+        - Memory and state
+        - Governance and security
+        - Telemetry
+        - Dashboard
+        - Documentation
+        - Other
+    validations:
+      required: true

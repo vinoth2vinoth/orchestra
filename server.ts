@@ -38,6 +38,7 @@ import { globalWorkerCluster } from './src/framework/orchestration/WorkerCluster
 import { AutonomousDaemon } from './src/framework/orchestration/AutonomousDaemon.js';
 import { SimulationManager } from './src/framework/core/SimulationManager.js';
 import { compareAndWriteProjectBoard, readProjectBoard } from './src/framework/tools/ProjectBoardStore.js';
+import { createApiAuthMiddleware } from './src/framework/security/ApiAuth.js';
 
 // Bootstrap Enterprise Features (DLP, Token Budget, Semantic Cache, Audit, Metrics)
 registerEnterpriseFeatures();
@@ -54,30 +55,7 @@ async function startServer() {
   // Middleware to parse JSON
   app.use(express.json({ limit: '10mb' }));
 
-  const apiAuthMiddleware: express.RequestHandler = (req, res, next) => {
-    if (process.env.ORCHESTRA_DEV_AUTH_BYPASS === 'true') {
-      return next();
-    }
-
-    const configuredToken = process.env.ORCHESTRA_API_TOKEN;
-    if (!configuredToken) {
-      return res.status(503).json({ error: 'API authentication is not configured. Set ORCHESTRA_API_TOKEN or explicitly enable ORCHESTRA_DEV_AUTH_BYPASS=true for local development.' });
-    }
-
-    const authHeader = req.header('authorization') || '';
-    const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
-      ? authHeader.slice(7).trim()
-      : '';
-    const apiKey = req.header('x-orchestra-api-key') || '';
-
-    if (bearerToken !== configuredToken && apiKey !== configuredToken) {
-      return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    next();
-  };
-
-  app.use('/api', apiAuthMiddleware);
+  app.use('/api', createApiAuthMiddleware());
 
   const globalMemory = new MemoryMesh();
   const createWorkflowMemory = () => new MemoryMesh();

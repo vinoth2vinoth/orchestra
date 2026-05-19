@@ -7,6 +7,7 @@
 ### A TypeScript framework for multi-agent AI orchestration, governance, memory, and observable LLM workflows.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/vinoth2vinoth/orchestra-multi-agent-ai-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/vinoth2vinoth/orchestra-multi-agent-ai-framework/actions/workflows/ci.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
 [![Status](https://img.shields.io/badge/status-early%20development-yellow.svg)](#project-status)
@@ -167,6 +168,12 @@ ORCHESTRA_API_TOKEN=
 ORCHESTRA_DEV_AUTH_BYPASS=true
 ```
 
+Validate the repo before making changes:
+
+```bash
+npm run check
+```
+
 Start the local dashboard and API server:
 
 ```bash
@@ -178,12 +185,17 @@ The app runs on the configured `PORT` or `3000` by default.
 ## Useful Commands
 
 ```bash
+npm run check
 npm run lint
+npm run test
+npm run test:security
+npm run test:architecture
+npm run examples:check
 npm run build
-npx tsx src/framework/testing/run_tests.ts
-npx tsx workspace/security_correctness_regression_tests.ts
-npx tsx workspace/document_management_regression_tests.ts
+npm audit --audit-level=low
 ```
+
+`npm run check` is the canonical contributor confidence command: it typechecks, runs regression tests, verifies examples, and builds the project.
 
 ## Supported Providers
 
@@ -215,7 +227,7 @@ src/framework/
 
 src/components/    React dashboard components
 readme/            Deep-dive architecture documentation
-workspace/         Local workspace files and regression tests
+workspace/         Local workspace fixtures and regression tests, not production data
 python_orchestra/  Standalone Python prototype
 ```
 
@@ -223,6 +235,7 @@ python_orchestra/  Standalone Python prototype
 
 ### Core Runtime
 
+- [Development Guide](readme/development.md)
 - [Core Orchestration](readme/core-orchestration.md)
 - [Agent Personas](readme/agent-personas.md)
 - [Paradigms](readme/PARADIGMS.md)
@@ -260,7 +273,7 @@ python_orchestra/  Standalone Python prototype
 
 The [`examples/`](examples) directory contains small scenario files for swarm orchestration, human approval, MCP integration, consensus debate, and data-pipeline workflows.
 
-These examples are useful for understanding intended patterns, but the framework is still evolving. Prefer the regression tests in `workspace/` and `src/framework/testing/` when validating current behavior.
+These examples are typechecked by `npm run examples:check` so API drift is caught before merge. Prefer `npm run test` and `npm run check` when validating framework behavior.
 
 ## Roadmap
 

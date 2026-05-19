@@ -1,34 +1,37 @@
-import {
-  Orchestrator,
-  DaemonParadigm,
-} from "orchestra-framework/orchestration";
-import { BaseAgent } from "orchestra-framework/agents";
+import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
+import { Orchestrator } from '../src/framework/orchestration/Orchestrator.ts';
+import { WorkerAgent } from '../src/framework/agents/WorkerAgent.ts';
+import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
 
-// This MCP string points to a standard GitHub Model Context Protocol server.
-// No custom fetch requests needed. The tool registry natively pulls all Github schemas!
-const gitHubMCPServer = "mcp://community.github/v1";
+const memory = new MemoryMesh({ tenantId: 'examples', namespace: 'mcp-github' });
+const llmConfig: LLMConfig = {
+  apiKey: process.env.GEMINI_API_KEY ?? 'SIMULATION_ONLY',
+  modelName: process.env.LLM_MODEL ?? 'gemini-2.5-flash'
+};
 
-const prReviewer = new BaseAgent({
-  name: "Senior_PR_Reviewer",
-  systemInstruction:
-    "You act as an autonomous background daemon. Review incoming pull requests for security vulnerabilities. Comment on the PR directly if you find an issue.",
-  tools: [gitHubMCPServer], // 🔌 Dynamic discovery of GitHub capabilities
-});
+const prReviewer = new WorkerAgent(
+  'Senior PR Reviewer',
+  'Review pull requests for security, correctness, and missing tests. Mention MCP tools only when they are configured by the host application.',
+  'WORKER',
+  memory,
+  llmConfig,
+  ['security_audit', 'api_integration']
+);
 
 const orchestrator = new Orchestrator();
 
 async function run() {
-  console.log("👻 Launching GitHub Reviewer Daemon...");
+  const result = await orchestrator.executeWorkflow(
+    'Draft a pull request review checklist for a TypeScript framework change touching queue retries and audit logs.',
+    {
+      paradigm: 'SWARM',
+      agents: [prReviewer],
+      enableLearning: false
+    },
+    'example-mcp-github'
+  );
 
-  // Instead of a one-time task, this sets up the agent as a background worker
-  // polling the queue or responding to webhook events over the Message Bus.
-  await orchestrator.registerDaemon({
-    agent: prReviewer,
-    eventTrigger: "GITHUB_WEBHOOK_PR_OPENED",
-    paradigm: DaemonParadigm,
-  });
-
-  console.log("✅ Daemon listening to Message Bus for PR events...");
+  console.log('Review checklist:\n', result);
 }
 
-run();
+void run();

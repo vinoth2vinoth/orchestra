@@ -6,6 +6,7 @@ import { MemoryStateAdapter } from '../src/framework/core/StateAdapter.ts';
 import { StorageMesh } from '../src/framework/storage/StorageMesh.ts';
 import { InfraStressor } from '../src/framework/testing/Stressor.ts';
 import { globalIAMInterceptor } from '../src/framework/security/IAMInterceptor.ts';
+import { createApiAuthMiddleware } from '../src/framework/security/ApiAuth.ts';
 
 function assert(condition: unknown, message: string) {
   if (!condition) throw new Error(message);
@@ -67,9 +68,64 @@ async function testStressSuiteFailsOnCorruption() {
   assert(result.syncCheck.inSync === true, 'Expected stress sync check to pass');
 }
 
+async function invokeAuth(env: NodeJS.ProcessEnv, headers: Record<string, string> = {}) {
+  let statusCode = 200;
+  let body: any;
+  let nextCalled = false;
+  const normalizedHeaders = new Map(
+    Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])
+  );
+
+  const middleware = createApiAuthMiddleware(env);
+  await middleware(
+    { header: (name: string) => normalizedHeaders.get(name.toLowerCase()) } as any,
+    {
+      status(code: number) {
+        statusCode = code;
+        return this;
+      },
+      json(payload: any) {
+        body = payload;
+        return this;
+      }
+    } as any,
+    () => {
+      nextCalled = true;
+    }
+  );
+
+  return { statusCode, body, nextCalled };
+}
+
+async function testApiAuthMiddleware() {
+  const unconfigured = await invokeAuth({});
+  assert(unconfigured.statusCode === 503, `Expected unconfigured auth to return 503, got ${unconfigured.statusCode}`);
+  assert(unconfigured.nextCalled === false, 'Unconfigured auth should not call next');
+
+  const missingToken = await invokeAuth({ ORCHESTRA_API_TOKEN: 'secret-token' });
+  assert(missingToken.statusCode === 401, `Expected missing token to return 401, got ${missingToken.statusCode}`);
+  assert(missingToken.nextCalled === false, 'Missing token should not call next');
+
+  const bearer = await invokeAuth(
+    { ORCHESTRA_API_TOKEN: 'secret-token' },
+    { authorization: 'Bearer secret-token' }
+  );
+  assert(bearer.nextCalled === true, 'Valid bearer token should call next');
+
+  const apiKey = await invokeAuth(
+    { ORCHESTRA_API_TOKEN: 'secret-token' },
+    { 'x-orchestra-api-key': 'secret-token' }
+  );
+  assert(apiKey.nextCalled === true, 'Valid API key header should call next');
+
+  const bypass = await invokeAuth({ ORCHESTRA_DEV_AUTH_BYPASS: 'true' });
+  assert(bypass.nextCalled === true, 'Explicit dev auth bypass should call next');
+}
+
 async function main() {
   const tests = [
     ['tool traversal blocked', testToolTraversalBlocked],
+    ['api auth middleware', testApiAuthMiddleware],
     ['storage traversal blocked', testStorageTraversalBlocked],
     ['atomic state mutation', testAtomicStateMutation],
     ['stress suite correctness', testStressSuiteFailsOnCorruption],

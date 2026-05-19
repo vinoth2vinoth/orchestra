@@ -90,4 +90,4 @@ for (const [name, run] of tests) {
 }
 
 console.log(JSON.stringify(results, null, 2));
-if (results.some(r => !r.ok)) process.exit(1);
+process.exit(results.some(r => !r.ok) ? 1 : 0);

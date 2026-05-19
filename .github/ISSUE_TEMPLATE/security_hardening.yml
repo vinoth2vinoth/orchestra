@@ -1,0 +1,33 @@
+name: Security hardening
+description: Suggest a security control, regression, or threat-model improvement.
+title: "[Security]: "
+labels:
+  - security
+body:
+  - type: markdown
+    attributes:
+      value: Do not include secrets, live tokens, or exploit details for an unpatched high-impact vulnerability. Use a private disclosure path for sensitive reports.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What security risk or control should be addressed?
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: Describe the affected boundary, data, tenants, tools, or workflows.
+    validations:
+      required: true
+  - type: textarea
+    id: recommendation
+    attributes:
+      label: Recommended hardening
+    validations:
+      required: true
+  - type: textarea
+    id: tests
+    attributes:
+      label: Suggested regression tests

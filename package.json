@@ -8,7 +8,14 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:core": "tsx src/framework/testing/run_tests.ts",
+    "test:security": "tsx workspace/security_correctness_regression_tests.ts && tsx workspace/tool_mode_regression_tests.ts && tsx workspace/document_management_regression_tests.ts",
+    "test:architecture": "tsx workspace/architecture_queue_regression_tests.ts && tsx workspace/runtime_context_regression_tests.ts && tsx workspace/memory_persistence_regression_tests.ts && tsx workspace/audit_log_regression_tests.ts && tsx workspace/plugin_governance_regression_tests.ts && tsx workspace/claude_audit_regression_tests.ts",
+    "test:projects": "tsx workspace/audit_project_submission_tests.ts",
+    "test": "npm run test:core && npm run test:security && npm run test:architecture && npm run test:projects",
+    "examples:check": "tsc -p tsconfig.examples.json --noEmit",
+    "check": "npm run lint && npm run test && npm run examples:check && npm run build"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",

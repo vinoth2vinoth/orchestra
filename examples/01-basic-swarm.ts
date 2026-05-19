@@ -1,33 +1,32 @@
-import { Orchestrator, SwarmParadigm } from "orchestra-framework/orchestration";
-import { BaseAgent } from "orchestra-framework/agents";
+import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
+import { Orchestrator } from '../src/framework/orchestration/Orchestrator.ts';
+import { WorkerAgent } from '../src/framework/agents/WorkerAgent.ts';
+import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
 
-// Initialize specialized agents
-const researcher = new BaseAgent({
-  name: "Researcher",
-  systemInstruction: "Find factual information.",
-});
-const analyst = new BaseAgent({
-  name: "Analyst",
-  systemInstruction: "Analyze data and find trends.",
-});
-const writer = new BaseAgent({
-  name: "Writer",
-  systemInstruction: "Synthesize findings into a final report.",
-});
+const memory = new MemoryMesh({ tenantId: 'examples', namespace: 'basic-swarm' });
+const llmConfig: LLMConfig = {
+  apiKey: process.env.GEMINI_API_KEY ?? 'SIMULATION_ONLY',
+  modelName: process.env.LLM_MODEL ?? 'gemini-2.5-flash'
+};
 
-// Boot the Orchestrator
+const researcher = new WorkerAgent('Researcher', 'Find factual information.', 'WORKER', memory, llmConfig, ['research']);
+const analyst = new WorkerAgent('Analyst', 'Analyze data and find trends.', 'WORKER', memory, llmConfig, ['analysis']);
+const writer = new WorkerAgent('Writer', 'Synthesize findings into a final report.', 'WORKER', memory, llmConfig, ['writing']);
+
 const orchestrator = new Orchestrator();
 
 async function run() {
-  console.log("🚀 Spawning Swarm...");
+  const result = await orchestrator.executeWorkflow(
+    'Research the impact of quantum computing on modern cryptography, analyze timelines, and write a two-paragraph executive summary.',
+    {
+      paradigm: 'SWARM',
+      agents: [researcher, analyst, writer],
+      enableLearning: false
+    },
+    'example-basic-swarm'
+  );
 
-  const result = await orchestrator.routeTask({
-    task: "Research the impact of quantum computing on modern cryptography, analyze the timelines, and write a 2-paragraph executive summary.",
-    agents: [researcher, analyst, writer],
-    paradigm: SwarmParadigm,
-  });
-
-  console.log("\n✅ Final Aggregated Output:\n", result.finalOutput);
+  console.log('\nFinal swarm output:\n', result);
 }
 
-run();
+void run();

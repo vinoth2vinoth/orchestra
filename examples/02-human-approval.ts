@@ -1,42 +1,50 @@
-import { Orchestrator, SwarmParadigm } from "orchestra-framework/orchestration";
-import { BaseAgent } from "orchestra-framework/agents";
-import { z } from "zod";
+import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
+import { Orchestrator } from '../src/framework/orchestration/Orchestrator.ts';
+import { WorkerAgent } from '../src/framework/agents/WorkerAgent.ts';
+import { globalToolRegistry } from '../src/framework/tools/ToolRegistry.ts';
+import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
+import { z } from 'zod';
 
-// Define a high-risk tool that requires human approval
-const deployToProductionTool = {
-  name: "deploy_to_production",
-  description: "Deploys a specified repository to the production server.",
-  schema: z.object({
-    repoName: z.string(),
-    commitHash: z.string(),
+globalToolRegistry.register(
+  'deployExampleService',
+  'Deploy a named service to a production environment after human approval.',
+  z.object({
+    serviceName: z.string(),
+    version: z.string()
   }),
-  requires_approval: true, // 🛑 This flag pauses execution!
+  async ({ serviceName, version }) => `Deployment queued for ${serviceName}@${version}.`,
+  { highRisk: true, capabilities: ['deployment_admin'] }
+);
+
+const memory = new MemoryMesh({ tenantId: 'examples', namespace: 'human-approval' });
+const llmConfig: LLMConfig = {
+  apiKey: process.env.GEMINI_API_KEY ?? 'SIMULATION_ONLY',
+  modelName: process.env.LLM_MODEL ?? 'gemini-2.5-flash'
 };
 
-const devOpsAgent = new BaseAgent({
-  name: "DevOps_Lead",
-  systemInstruction:
-    "You handle deployments. When requested, use deploy_to_production tool.",
-  tools: [deployToProductionTool],
-});
+const devOpsAgent = new WorkerAgent(
+  'DevOps Lead',
+  'Handle deployment requests. Use the deployment tool only when explicitly requested.',
+  'WORKER',
+  memory,
+  llmConfig,
+  ['deployment_admin']
+);
 
-const orchestrator = new Orchestrator({ stateCheckpointing: true });
+const orchestrator = new Orchestrator();
 
 async function run() {
-  console.log("🚀 Simulating deployment request...");
-
-  // The task will pause entirely when the agent attempts to call `deploy_to_production`
-  const deploymentTask = await orchestrator.routeTask({
-    agent: devOpsAgent,
-    task: "Deploy the backend-api repository, commit hash 8f9b2A to production.",
-    paradigm: SwarmParadigm,
-  });
-
-  console.log("⏸️ Status:", deploymentTask.status); // "AWAITING_HUMAN"
-  console.log(
-    "Trace ID mapped for Dashboard approval:",
-    deploymentTask.traceId,
+  const deploymentTask = await orchestrator.executeWorkflow(
+    'Deploy backend-api version 8f9b2a to production.',
+    {
+      paradigm: 'SWARM',
+      agents: [devOpsAgent],
+      enableLearning: false
+    },
+    'example-human-approval'
   );
+
+  console.log('Deployment workflow status:', deploymentTask);
 }
 
-run();
+void run();
