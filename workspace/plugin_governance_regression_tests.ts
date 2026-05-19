@@ -1,4 +1,6 @@
 import { PluginRegistry } from '../src/framework/core/PluginRegistry.ts';
+import { globalPluginRegistry } from '../src/framework/core/PluginRegistry.ts';
+import { registerEnterpriseFeatures } from '../src/framework/plugins/EnterpriseFeatures.ts';
 
 async function testPluginRegistryIsIdempotent() {
   const registry = new PluginRegistry();
@@ -13,8 +15,20 @@ async function testPluginRegistryIsIdempotent() {
   }
 }
 
+async function testStubGroundednessIsNotDefault() {
+  delete process.env.ORCHESTRA_ENABLE_STUB_GROUNDEDNESS;
+
+  registerEnterpriseFeatures();
+
+  const names = globalPluginRegistry.listPlugins().map(plugin => plugin.name);
+  if (names.includes('GroundednessEvaluatorPlugin')) {
+    throw new Error('GroundednessEvaluatorPlugin is a stub and must not be registered by default.');
+  }
+}
+
 const tests = [
-  ['plugin registry is idempotent', testPluginRegistryIsIdempotent]
+  ['plugin registry is idempotent', testPluginRegistryIsIdempotent],
+  ['stub groundedness is not default', testStubGroundednessIsNotDefault]
 ] as const;
 
 const results = [];

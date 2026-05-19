@@ -46,9 +46,36 @@ async function testMapReduceConfigErrorNoBackoff() {
   throw new Error('Expected MAP_REDUCE without PLANNER to fail.');
 }
 
+async function testGraphConfigErrorNoBackoff() {
+  const worker = new WorkerAgent('GraphWorker', 'Return a concise answer.', 'WORKER', memory, llmConfig, [], undefined, undefined, undefined, 'graph-worker');
+  const config: WorkflowConfig = {
+    paradigm: 'GRAPH',
+    agents: [worker],
+    edges: [{ from: 'graph-worker', to: 'missing-agent' }],
+    maxRetries: 3
+  };
+
+  const start = Date.now();
+  try {
+    await new Orchestrator().executeWorkflow('This graph references a missing agent.', config, `CLAUDE_GRAPH_${Date.now()}`);
+  } catch (err: any) {
+    const durationMs = Date.now() - start;
+    if (!(err instanceof ConfigurationError || err.name === 'ConfigurationError')) {
+      throw new Error(`Expected ConfigurationError, got ${err.name}: ${err.message}`);
+    }
+    if (durationMs > 500) {
+      throw new Error(`Graph ConfigurationError was retried/backed off for ${durationMs}ms`);
+    }
+    return;
+  }
+
+  throw new Error('Expected GRAPH with an unknown edge endpoint to fail.');
+}
+
 const tests = [
   ['swarm status shape', testSwarmStatus],
-  ['map-reduce config error no backoff', testMapReduceConfigErrorNoBackoff]
+  ['map-reduce config error no backoff', testMapReduceConfigErrorNoBackoff],
+  ['graph config error no backoff', testGraphConfigErrorNoBackoff]
 ] as const;
 
 const results = [];

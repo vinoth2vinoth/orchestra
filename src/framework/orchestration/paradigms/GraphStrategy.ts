@@ -2,6 +2,7 @@ import { BaseAgent } from '../../agents/BaseAgent.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
 import { globalCheckpointer } from '../Checkpointer.ts';
 import { WorkflowConfig } from '../Orchestrator.ts';
+import { ConfigurationError } from '../../core/ErrorHandler.ts';
 
 /**
  * Graph Paradigm: Defined execution edges between agents.
@@ -9,13 +10,13 @@ import { WorkflowConfig } from '../Orchestrator.ts';
 export class GraphStrategy extends ParadigmStrategy {
     async run(task: any, agents: BaseAgent[], context: ParadigmContext, config: WorkflowConfig) {
         if (!config.edges || config.edges.length === 0) {
-            throw new Error("GRAPH paradigm requires at least one execution edge.");
+            throw new ConfigurationError("GRAPH paradigm requires at least one execution edge.");
         }
         const blackboard = context.blackboard;
         const agentIds = new Set(agents.map(a => a.card.id));
         for (const edge of config.edges) {
             if (!agentIds.has(edge.from) || !agentIds.has(edge.to)) {
-                throw new Error(`GRAPH edge references unknown agent: ${edge.from} -> ${edge.to}`);
+                throw new ConfigurationError(`GRAPH edge references unknown agent: ${edge.from} -> ${edge.to}`);
             }
         }
         

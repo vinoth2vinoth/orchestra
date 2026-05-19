@@ -108,7 +108,7 @@ The framework includes a suite of core and experimental plugins in `plugins/Ente
 - **`OpenTelemetryTracingPlugin`**: Maps agent, tool, and LLM lifecycles to OTel Spans for distributed tracing. Uses `globalOTelExporter` from `../telemetry/OTelExporter.ts`. Records latency, token usage, and error status codes. Creates spans for `Agent_Execute_<agentId>`, `Tool_Invoke_<toolName>`, and `LLM_Call_<provider>`.
 - **`SelfHealingRetryPlugin`**: Automatically catches `onAgentFault`, injects a critique of the error, and retries the execution up to 3 times. Emits `SELF_HEALING_ENGINE` telemetry events. Dynamically imports the agent from `../agents/AgentRegistry.ts` for re-execution.
 - **`MetricsExportPlugin`**: Tracks real-time counters for tokens, latency, and success rates for Prometheus/Grafana. Exposes static `metrics` object with `totalLLMCalls`, `totalTokensUsed`, `toolInvocations`, `agentExecutions`, `avgLatencyMs`, `totalLatencyMs`, `lastLatencyMs`.
-- **`GroundednessEvaluatorPlugin`**: Detects potential hallucinations by validating output existence and structure. Appends `HALLUCINATION_DETECTED` events to `globalEventStore`.
+- **`GroundednessEvaluatorPlugin`**: Experimental stub only. It is not registered by default because it only checks that output is non-empty; enable it explicitly with `ORCHESTRA_ENABLE_STUB_GROUNDEDNESS=true` for local experiments, or replace it with a real groundedness/RAG evaluator before production use.
 
 ### Advanced Workflows
 - **`HumanInTheLoopApprovalPlugin`**: Intercepts high-risk tools (e.g., `refund_customer`, `execute_trade`, `send_email`) and requires a `_hitl_approved` token. Throws `HumanApprovalRequiredException` with checkpoint IDs for pending approvals. Strips the approval token from args before forwarding.
@@ -183,7 +183,7 @@ graph TD
         OT[OpenTelemetryTracingPlugin]
         SH[SelfHealingRetryPlugin]
         ME[MetricsExportPlugin]
-        GE[GroundednessEvaluatorPlugin]
+        GE[GroundednessEvaluatorPlugin optional stub]
     end
 
     subgraph "Advanced Workflows"
@@ -207,7 +207,7 @@ graph TD
     PR --> OT
     PR --> SH
     PR --> ME
-    PR --> GE
+    PR -. explicit opt-in .-> GE
     PR --> HITL
     PR --> SM
     PR --> CA
