@@ -15,9 +15,22 @@
 
 </div>
 
-Orchestra is an early-stage **multi-agent AI framework** for building, testing, and observing agentic workflows in TypeScript. It focuses on the hard parts that appear after a prototype works: orchestration strategy, state recovery, tool safety, human approval, memory, telemetry, and distributed execution patterns.
+Orchestra is an early-stage **multi-agent AI framework** for building, testing, and observing AI workflows in TypeScript. In plain language: it helps several AI workers cooperate on one job, while the project keeps records, checks risky actions, and tries to recover safely when something goes wrong.
 
 The project is useful today as a research and development framework for agent orchestration. It is not yet a turnkey production platform. The default setup favors local experimentation; production deployments should enable the security, state, and runtime controls documented below.
+
+## First 10 Minutes
+
+If you are new here, start with the no-cost demo:
+
+```bash
+npm install
+npm run demo
+```
+
+The demo does not need paid AI keys. It runs a sample code-review workflow and should return a blocked release decision for a risky change.
+
+For the friendliest walkthrough, read [Quickstart](QUICKSTART.md).
 
 ## Why Orchestra
 
@@ -156,6 +169,12 @@ npm install
 cp .env.example .env
 ```
 
+Run the no-cost demo:
+
+```bash
+npm run demo
+```
+
 Edit `.env` and add at least one provider key:
 
 ```env
@@ -195,6 +214,7 @@ npm run test:durability
 npm run test:state-backend
 npm run test:sdk
 npm run test:reference
+npm run demo
 npm run example:code-review
 npm run examples:check
 npm run build
@@ -244,6 +264,7 @@ python_orchestra/  Standalone Python prototype
 
 ### Core Runtime
 
+- [Quickstart](QUICKSTART.md)
 - [SDK Guide](docs/SDK.md)
 - [Reliability Contract](docs/RELIABILITY.md)
 - [Development Guide](readme/development.md)
@@ -291,6 +312,7 @@ The [`examples/`](examples) directory contains small scenario files for swarm or
 [`examples/reference-code-review`](examples/reference-code-review) is a deterministic AI code-review and release-governance workflow. It runs a `GRAPH` workflow with specialist security, architecture, and test reviewers feeding a release judge. The default scenario blocks a risky deployment webhook and requires human approval, without spending provider API tokens.
 
 ```bash
+npm run demo
 npm run example:code-review
 npm run test:reference
 ```

@@ -15,6 +15,12 @@ It runs fully deterministic local agents by default, so it does not require prov
 ## Run
 
 ```bash
+npm run demo
+```
+
+This is the same as:
+
+```bash
 npm run example:code-review
 ```
 

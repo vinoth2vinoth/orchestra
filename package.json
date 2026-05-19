@@ -44,6 +44,7 @@
     "test:reference": "tsx workspace/reference_code_review_tests.ts",
     "test:projects": "tsx workspace/audit_project_submission_tests.ts",
     "test": "npm run test:core && npm run test:security && npm run test:architecture && npm run test:reliability && npm run test:durability && npm run test:sdk && npm run test:reference && npm run test:projects",
+    "demo": "npm run example:code-review",
     "example:code-review": "tsx examples/reference-code-review/run.ts",
     "examples:check": "tsc -p tsconfig.examples.json --noEmit",
     "check": "npm run lint && npm run test && npm run examples:check && npm run build"
