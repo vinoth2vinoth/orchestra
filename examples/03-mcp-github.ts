@@ -1,7 +1,4 @@
-import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
-import { Orchestrator } from '../src/framework/orchestration/Orchestrator.ts';
-import { WorkerAgent } from '../src/framework/agents/WorkerAgent.ts';
-import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
+import { MemoryMesh, Orchestrator, WorkerAgent, type LLMConfig } from '../src/framework/index.ts';
 
 const memory = new MemoryMesh({ tenantId: 'examples', namespace: 'mcp-github' });
 const llmConfig: LLMConfig = {

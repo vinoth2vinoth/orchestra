@@ -28,6 +28,12 @@ Run it directly:
 npm run test:reliability
 ```
 
+Redis-backed durability checks live in `workspace/redis_durability_tests.ts` and verify state-adapter parity plus queue lease recovery using Redis-backed global state:
+
+```bash
+ORCHESTRA_STATE_ADAPTER=redis REDIS_URL=redis://localhost:6379 npm run test:redis
+```
+
 It is also included in:
 
 ```bash
@@ -113,9 +119,20 @@ ORCHESTRA_ENABLE_EXPERIMENTAL_PLUGINS=false
 
 In-memory state, queue, and event adapters should be treated as local development defaults, not distributed reliability guarantees.
 
+## Adapter Status
+
+| Capability | Memory Adapter | Redis Adapter |
+| --- | --- | --- |
+| Local development | Verified | Supported |
+| Atomic `mutate` / `increment` / `compareAndSwap` | Verified by `test:security` | Verified by `test:redis` |
+| Locks | Basic in-process lock | Redis lock with TTL |
+| Lists / event history | Verified locally | Verified by Redis parity tests |
+| Queue lease recovery | Verified by `test:architecture` and `test:reliability` | Verified by `test:redis` |
+| Cross-process durability | Not intended | First CI-backed proof in place |
+
 ## Next Reliability Milestones
 
-- Add Redis-backed CI service tests.
+- Expand Redis-backed CI service tests.
 - Add workflow interruption and resume tests that cross a real process boundary.
 - Add event replay snapshots for failed workflows.
 - Add DLQ replay tooling.

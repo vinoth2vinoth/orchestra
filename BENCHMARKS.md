@@ -41,6 +41,7 @@ Environment:
 | `npm run test:security` | Passed |
 | `npm run test:architecture` | Passed |
 | `npm run test:reliability` | Passed |
+| `npm run test:redis` | Configured for CI with Redis service container |
 | `npm run test:projects` | Passed |
 | `npm run test` | Passed |
 | `npm run examples:check` | Passed |

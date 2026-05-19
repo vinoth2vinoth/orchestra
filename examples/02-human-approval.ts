@@ -1,8 +1,4 @@
-import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
-import { Orchestrator } from '../src/framework/orchestration/Orchestrator.ts';
-import { WorkerAgent } from '../src/framework/agents/WorkerAgent.ts';
-import { globalToolRegistry } from '../src/framework/tools/ToolRegistry.ts';
-import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
+import { MemoryMesh, Orchestrator, WorkerAgent, globalToolRegistry, type LLMConfig } from '../src/framework/index.ts';
 import { z } from 'zod';
 
 globalToolRegistry.register(

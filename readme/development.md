@@ -31,6 +31,7 @@ npm run test
 npm run test:security
 npm run test:architecture
 npm run test:reliability
+npm run test:redis
 npm run test:projects
 npm run examples:check
 npm run build
@@ -39,9 +40,17 @@ npm audit --audit-level=low
 
 The security suite covers path safety, API auth, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The reliability suite covers checkpoint recovery, event reload, queue crash recovery, and graph resume behavior. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
 
+`npm run test:redis` requires a running Redis instance:
+
+```bash
+ORCHESTRA_STATE_ADAPTER=redis REDIS_URL=redis://localhost:6379 npm run test:redis
+```
+
+GitHub Actions runs this command against a Redis service container.
+
 ## Examples
 
-The files in `examples/` are typechecked by `npm run examples:check`. They are intended as current API references and should compile without requiring live LLM calls. If an example becomes aspirational or depends on an external service, mark that clearly in the file and keep the default check deterministic.
+The files in `examples/` are typechecked by `npm run examples:check`. They are intended as current API references and should compile without requiring live LLM calls. Examples should import from `src/framework/index.ts`, the public SDK entrypoint, instead of deep internal modules. If an example becomes aspirational or depends on an external service, mark that clearly in the file and keep the default check deterministic.
 
 ## Workspace Directory
 

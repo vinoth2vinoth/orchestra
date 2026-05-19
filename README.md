@@ -191,12 +191,15 @@ npm run test
 npm run test:security
 npm run test:architecture
 npm run test:reliability
+npm run test:redis
 npm run examples:check
 npm run build
 npm audit --audit-level=low
 ```
 
 `npm run check` is the canonical contributor confidence command: it typechecks, runs regression tests, verifies examples, and builds the project.
+
+`npm run test:redis` requires `REDIS_URL` and `ORCHESTRA_STATE_ADAPTER=redis`; GitHub Actions runs it against a Redis service container.
 
 ## Supported Providers
 
@@ -225,6 +228,7 @@ src/framework/
   storage/         Workspace storage safety and mesh utilities
   testing/         Built-in tests and stress tooling
   tools/           Tool registry, MCP client, external tools, project board
+  index.ts         Public SDK entrypoint for examples and downstream consumers
 
 src/components/    React dashboard components
 readme/            Deep-dive architecture documentation
@@ -277,6 +281,8 @@ python_orchestra/  Standalone Python prototype
 The [`examples/`](examples) directory contains small scenario files for swarm orchestration, human approval, MCP integration, consensus debate, and data-pipeline workflows.
 
 These examples are typechecked by `npm run examples:check` so API drift is caught before merge. Prefer `npm run test` and `npm run check` when validating framework behavior.
+
+Examples import from the public `src/framework/index.ts` SDK entrypoint rather than deep internal modules.
 
 ## Roadmap
 

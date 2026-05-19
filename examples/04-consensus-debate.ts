@@ -1,8 +1,4 @@
-import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
-import { Orchestrator } from '../src/framework/orchestration/Orchestrator.ts';
-import { WorkerAgent } from '../src/framework/agents/WorkerAgent.ts';
-import { CriticAgent } from '../src/framework/agents/CriticAgent.ts';
-import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
+import { CriticAgent, MemoryMesh, Orchestrator, WorkerAgent, type LLMConfig } from '../src/framework/index.ts';
 
 const memory = new MemoryMesh({ tenantId: 'examples', namespace: 'consensus-debate' });
 const llmConfig: LLMConfig = {

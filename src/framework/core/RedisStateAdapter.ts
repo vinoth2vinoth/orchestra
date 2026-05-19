@@ -115,4 +115,8 @@ export class RedisStateAdapter implements StateAdapter {
     public async releaseLock(key: string): Promise<void> {
         await this.client.del(`lock:${key}`);
     }
+
+    public disconnect(): void {
+        this.client.disconnect();
+    }
 }

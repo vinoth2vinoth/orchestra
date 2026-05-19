@@ -13,6 +13,7 @@
     "test:security": "tsx workspace/security_correctness_regression_tests.ts && tsx workspace/tool_mode_regression_tests.ts && tsx workspace/document_management_regression_tests.ts",
     "test:architecture": "tsx workspace/architecture_queue_regression_tests.ts && tsx workspace/runtime_context_regression_tests.ts && tsx workspace/memory_persistence_regression_tests.ts && tsx workspace/audit_log_regression_tests.ts && tsx workspace/plugin_governance_regression_tests.ts && tsx workspace/claude_audit_regression_tests.ts",
     "test:reliability": "tsx workspace/reliability_gauntlet_tests.ts",
+    "test:redis": "tsx workspace/redis_durability_tests.ts",
     "test:projects": "tsx workspace/audit_project_submission_tests.ts",
     "test": "npm run test:core && npm run test:security && npm run test:architecture && npm run test:reliability && npm run test:projects",
     "examples:check": "tsc -p tsconfig.examples.json --noEmit",

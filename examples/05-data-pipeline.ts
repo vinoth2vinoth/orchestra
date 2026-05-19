@@ -1,9 +1,4 @@
-import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
-import { Orchestrator } from '../src/framework/orchestration/Orchestrator.ts';
-import { ManagerAgent } from '../src/framework/agents/ManagerAgent.ts';
-import { PlannerAgent } from '../src/framework/agents/PlannerAgent.ts';
-import { WorkerAgent } from '../src/framework/agents/WorkerAgent.ts';
-import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
+import { ManagerAgent, MemoryMesh, Orchestrator, PlannerAgent, WorkerAgent, type LLMConfig } from '../src/framework/index.ts';
 
 const memory = new MemoryMesh({ tenantId: 'examples', namespace: 'data-pipeline' });
 const llmConfig: LLMConfig = {

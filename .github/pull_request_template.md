@@ -7,6 +7,7 @@
 - [ ] `npm run lint`
 - [ ] `npm run test`
 - [ ] `npm run test:reliability`
+- [ ] `npm run test:redis` when touching state, queue, locks, or distributed runtime behavior
 - [ ] `npm run examples:check`
 - [ ] `npm run build`
 - [ ] `npm audit --audit-level=low`
