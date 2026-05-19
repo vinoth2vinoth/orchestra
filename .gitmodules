@@ -1,4 +1,0 @@
-[submodule "doc-architect"]
-	path = doc-architect
-	url = https://github.com/vinoth2vinoth/DocArchitect.git
-	branch = main

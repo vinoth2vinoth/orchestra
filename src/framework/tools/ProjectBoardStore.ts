@@ -25,6 +25,23 @@ function versionFor(content: string): string {
     return crypto.createHash('sha256').update(content).digest('hex');
 }
 
+function writeBoardPayload(payload: string): void {
+    fs.mkdirSync(path.dirname(projectsFile), { recursive: true });
+    const tempPath = `${projectsFile}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tempPath, payload, 'utf8');
+    try {
+        fs.renameSync(tempPath, projectsFile);
+    } catch (err: any) {
+        if (process.platform === 'win32' && (err.code === 'EPERM' || err.code === 'EEXIST')) {
+            fs.rmSync(projectsFile, { force: true });
+            fs.renameSync(tempPath, projectsFile);
+            return;
+        }
+        fs.rmSync(tempPath, { force: true });
+        throw err;
+    }
+}
+
 async function withProjectBoardLock<T>(operation: () => Promise<T>): Promise<T> {
     const deadline = Date.now() + 5000;
     while (!(await globalStateAdapter.acquireLock(lockKey, 5000))) {
@@ -57,11 +74,8 @@ export async function readProjectBoard(): Promise<VersionedProjectBoard> {
 export async function writeProjectBoard(board: ProjectBoard): Promise<VersionedProjectBoard> {
     return withProjectBoardLock(async () => {
         const normalized = normalizeBoard(board);
-        fs.mkdirSync(path.dirname(projectsFile), { recursive: true });
         const payload = `${JSON.stringify(normalized, null, 2)}\n`;
-        const tempPath = `${projectsFile}.${process.pid}.${Date.now()}.tmp`;
-        fs.writeFileSync(tempPath, payload, 'utf8');
-        fs.renameSync(tempPath, projectsFile);
+        writeBoardPayload(payload);
         return {
             ...normalized,
             version: versionFor(payload)
@@ -80,11 +94,8 @@ export async function compareAndWriteProjectBoard(board: ProjectBoard, expectedV
         }
 
         const normalized = normalizeBoard(board);
-        fs.mkdirSync(path.dirname(projectsFile), { recursive: true });
         const payload = `${JSON.stringify(normalized, null, 2)}\n`;
-        const tempPath = `${projectsFile}.${process.pid}.${Date.now()}.tmp`;
-        fs.writeFileSync(tempPath, payload, 'utf8');
-        fs.renameSync(tempPath, projectsFile);
+        writeBoardPayload(payload);
         return {
             ...normalized,
             version: versionFor(payload)
@@ -97,11 +108,8 @@ export async function mutateProjectBoard(mutator: (board: ProjectBoard) => Proje
         const current = await readProjectBoard();
         const next = await mutator({ projects: current.projects });
         const normalized = normalizeBoard(next);
-        fs.mkdirSync(path.dirname(projectsFile), { recursive: true });
         const payload = `${JSON.stringify(normalized, null, 2)}\n`;
-        const tempPath = `${projectsFile}.${process.pid}.${Date.now()}.tmp`;
-        fs.writeFileSync(tempPath, payload, 'utf8');
-        fs.renameSync(tempPath, projectsFile);
+        writeBoardPayload(payload);
         return {
             ...normalized,
             version: versionFor(payload)

@@ -7,12 +7,6 @@
     "dev": "tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
-    "sync-docs": "tsx doc-architect/bin/cli.ts",
-    "docarchitect:init": "git submodule update --init --recursive doc-architect",
-    "docarchitect:update": "git submodule update --remote doc-architect",
-    "docarchitect:verify": "npx tsc -p doc-architect/tsconfig.json --noEmit && npx tsx workspace/document_management_regression_tests.ts",
-    "docarchitect:sync-safe": "npm run docarchitect:update && npm run docarchitect:verify && npm run lint && npm run build",
-    "publish-doc-architect": "tsx doc-architect/scripts/publish.ts",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit"
   },
