@@ -1,1 +1,0 @@
-export * from './DocArchitect.js';

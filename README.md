@@ -270,6 +270,24 @@ We have meticulously documented every facet of Orchestra into dedicated architec
 - 🛑 [Human-in-the-loop (HITL)](readme/human-in-the-loop.md) - Suspending state deterministically for human deployment approvals.
 - 🚀 [Deployment & Scaling Guide](readme/deployment-and-scaling.md) - Taking Orchestra to production.
 
+### DocArchitect Source Of Truth
+
+The `doc-architect/` directory is a Git submodule that points to the standalone public repo [vinoth2vinoth/DocArchitect](https://github.com/vinoth2vinoth/DocArchitect). This prevents Orchestra from carrying a stale fork of the documentation engine.
+
+For a fresh clone, initialize it with:
+
+```bash
+npm run docarchitect:init
+```
+
+To pull the latest upstream DocArchitect safely:
+
+```bash
+npm run docarchitect:sync-safe
+```
+
+That command updates the submodule, verifies DocArchitect, and then runs Orchestra integration checks before you commit the new pinned submodule commit.
+
 ---
 
 ## 🚀 Installation & Quick Start

@@ -37,6 +37,7 @@ import { GoogleGenAI } from '@google/genai';
 import { globalWorkerCluster } from './src/framework/orchestration/WorkerCluster.js';
 import { AutonomousDaemon } from './src/framework/orchestration/AutonomousDaemon.js';
 import { SimulationManager } from './src/framework/core/SimulationManager.js';
+import { compareAndWriteProjectBoard, readProjectBoard } from './src/framework/tools/ProjectBoardStore.js';
 
 // Bootstrap Enterprise Features (DLP, Token Budget, Semantic Cache, Audit, Metrics)
 registerEnterpriseFeatures();
@@ -194,6 +195,31 @@ async function startServer() {
           .filter(l => l.sourceAgentId === 'GOVERNANCE' || l.payload?.action?.includes('POLICY') || l.type === 'SYSTEM_HOOK')
           .slice(-50);
       res.json({ auditTrail: logs });
+  });
+
+  app.get('/api/projects', async (req, res) => {
+    try {
+      res.json(await readProjectBoard());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/projects', async (req, res) => {
+    try {
+      const { projects, version } = req.body;
+      if (!Array.isArray(projects)) {
+        return res.status(400).json({ error: 'projects array required' });
+      }
+
+      const next = await compareAndWriteProjectBoard({ projects }, version);
+      res.json(next);
+    } catch (err: any) {
+      if (err.code === 'VERSION_CONFLICT') {
+        return res.status(409).json({ error: err.message, currentVersion: err.currentVersion });
+      }
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // --- Workspace File Management APIs ---

@@ -1,26 +1,12 @@
 import { z } from 'zod';
-import * as fs from 'fs';
-import * as path from 'path';
 import { globalToolRegistry } from './ToolRegistry.ts';
 import { globalEventStore } from '../core/EventStore.ts';
-
-const workspaceRoot = path.join(process.cwd(), 'workspace');
-const PROJECTS_FILE = path.join(workspaceRoot, 'projects.json');
-
-const readProjects = () => {
-    if (!fs.existsSync(PROJECTS_FILE)) return { projects: [] };
-    const content = fs.readFileSync(PROJECTS_FILE, 'utf8');
-    return JSON.parse(content);
-};
-
-const writeProjects = (data: any) => {
-    fs.writeFileSync(PROJECTS_FILE, JSON.stringify(data, null, 2), 'utf8');
-};
+import { mutateProjectBoard, readProjectBoard } from './ProjectBoardStore.ts';
 
 /**
  * ProjectBoardTool
  * High-level semantic interface for agent-driven project management.
- * Avoids low-level file manipulations by providing domain-specific methods.
+ * Uses locked mutations so concurrent UI and agent updates do not overwrite each other.
  */
 
 globalToolRegistry.register(
@@ -36,8 +22,8 @@ globalToolRegistry.register(
             threadId: 'GLOBAL',
             payload: { tool: 'getProjectBoard', projectId }
         });
-        
-        const data = readProjects();
+
+        const data = await readProjectBoard();
         if (projectId) {
             const project = data.projects.find((p: any) => p.id === projectId);
             return JSON.stringify(project || { error: 'Project not found' });
@@ -62,37 +48,38 @@ globalToolRegistry.register(
             payload: { tool: 'updateTaskStatus', projectId, taskId, newStatus }
         });
 
-        // Normalize status
-        let normalizedStatus = newStatus.toUpperCase().replace('-', '_');
-        if (normalizedStatus === 'IN_PROGRESS') normalizedStatus = 'IN_PROGRESS'; // Already correct
-        
-        const data = readProjects();
-        const project = data.projects.find((p: any) => p.id === projectId);
-        if (!project) return `[Project Error]: Project ${projectId} not found.`;
+        const normalizedStatus = newStatus.toUpperCase().replace('-', '_');
+        let changedTask: any = null;
+        let oldStatus = '';
 
-        const task = project.tasks.find((t: any) => t.id === taskId);
-        if (!task) return `[Project Error]: Task ${taskId} not found in project ${projectId}.`;
+        await mutateProjectBoard((data) => {
+            const project = data.projects.find((p: any) => p.id === projectId);
+            if (!project) throw new Error(`[Project Error]: Project ${projectId} not found.`);
 
-        const oldStatus = task.status;
-        task.status = normalizedStatus;
-        writeProjects(data);
+            const task = project.tasks.find((t: any) => t.id === taskId);
+            if (!task) throw new Error(`[Project Error]: Task ${taskId} not found in project ${projectId}.`);
 
-        // Emit a system-level telemetry log so the UI highlights this change
+            oldStatus = task.status;
+            task.status = normalizedStatus;
+            changedTask = task;
+            return data;
+        });
+
         globalEventStore.append({
             type: 'TELEMETRY_EMIT',
             sourceAgentId: 'PROJECT_SERVICE',
             threadId: 'GLOBAL',
-            payload: { 
+            payload: {
                 action: 'TASK_STATUS_CHANGED',
                 projectId,
                 taskId,
                 oldStatus,
-                newStatus,
-                text: `[SYSTEM] Task "${task.title}" moved from ${oldStatus} to ${newStatus}.`
+                newStatus: normalizedStatus,
+                text: `[SYSTEM] Task "${changedTask.title}" moved from ${oldStatus} to ${normalizedStatus}.`
             }
         });
 
-        return `✅ Task "${task.title}" successfully moved to ${newStatus}.`;
+        return `Task "${changedTask.title}" successfully moved to ${normalizedStatus}.`;
     }
 );
 
@@ -114,28 +101,30 @@ globalToolRegistry.register(
             payload: { tool: 'createProjectTask', projectId, title }
         });
 
-        const data = readProjects();
-        const project = data.projects.find((p: any) => p.id === projectId);
-        if (!project) return `[Project Error]: Project ${projectId} not found.`;
+        let newTask: any = null;
+        await mutateProjectBoard((data) => {
+            const project = data.projects.find((p: any) => p.id === projectId);
+            if (!project) throw new Error(`[Project Error]: Project ${projectId} not found.`);
 
-        const newTask = {
-            id: `t${Date.now()}`,
-            title,
-            description,
-            status: 'TODO',
-            assignee,
-            priority: priority.toUpperCase(),
-            createdAt: new Date().toISOString()
-        };
+            newTask = {
+                id: `t${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                title,
+                description,
+                status: 'TODO',
+                assignee,
+                priority: priority.toUpperCase(),
+                createdAt: new Date().toISOString()
+            };
 
-        project.tasks.push(newTask);
-        writeProjects(data);
+            project.tasks.push(newTask);
+            return data;
+        });
 
         globalEventStore.append({
             type: 'TELEMETRY_EMIT',
             sourceAgentId: 'PROJECT_SERVICE',
             threadId: 'GLOBAL',
-            payload: { 
+            payload: {
                 action: 'TASK_CREATED',
                 projectId,
                 task: newTask,
@@ -143,6 +132,6 @@ globalToolRegistry.register(
             }
         });
 
-        return `✅ Task "${title}" created (ID: ${newTask.id}).`;
+        return `Task "${title}" created (ID: ${newTask.id}).`;
     }
 );

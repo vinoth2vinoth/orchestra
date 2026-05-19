@@ -24,12 +24,11 @@ export interface Project {
   tasks: Task[];
 }
 
-const STORAGE_PATH = 'projects.json';
-
 export function ProjectManager({ liveLogs = [] }: { liveLogs?: any[] }) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [boardVersion, setBoardVersion] = useState<string | null>(null);
   
   // View States
   const [viewStyle, setViewStyle] = useState<'board' | 'list'>('board');
@@ -56,13 +55,11 @@ export function ProjectManager({ liveLogs = [] }: { liveLogs?: any[] }) {
   const fetchProjects = async (silent = false) => {
     try {
       if (!silent) setIsLoading(true);
-      const res = await fetch(`/api/workspace/file?path=${STORAGE_PATH}`);
+      const res = await fetch('/api/projects');
       if (res.ok) {
         const data = await res.json();
-        if (data.content) {
-          const parsed = JSON.parse(data.content);
-          setProjects(parsed.projects || (Array.isArray(parsed) ? parsed : []));
-        }
+        setProjects(data.projects || []);
+        setBoardVersion(data.version || null);
       }
     } catch (err) {
       console.error('Failed to load projects', err);
@@ -84,16 +81,26 @@ export function ProjectManager({ liveLogs = [] }: { liveLogs?: any[] }) {
   const saveProjects = async (updatedProjects: Project[]) => {
     setProjects(updatedProjects);
     try {
-      await fetch('/api/workspace/file', {
+      const res = await fetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          path: STORAGE_PATH,
-          content: JSON.stringify({ projects: updatedProjects }, null, 2)
+          projects: updatedProjects,
+          version: boardVersion
         })
       });
+      if (res.status === 409) {
+        alert('Project board changed in another session. Refreshing before applying your edit.');
+        await fetchProjects(true);
+        return;
+      }
+      if (!res.ok) throw new Error(`Failed to save projects: ${res.status}`);
+      const saved = await res.json();
+      setProjects(saved.projects || updatedProjects);
+      setBoardVersion(saved.version || null);
     } catch (err) {
       console.error('Failed to save projects', err);
+      await fetchProjects(true);
     }
   };
 
