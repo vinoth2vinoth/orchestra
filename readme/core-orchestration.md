@@ -507,7 +507,7 @@ flowchart TD
 
 ## 1. Orchestrator (`orchestration/Orchestrator.ts`)
 
-The `Orchestrator` is the central execution engine that manages multi-paradigm workflow execution. It supports 9 distinct paradigms, retry logic with exponential backoff, workflow suspension for human-in-the-loop approval, autonomous self-reflection, and distributed queue dispatching.
+The `Orchestrator` is the central execution engine that manages multi-paradigm workflow execution. It supports 9 distinct paradigms, retry logic with exponential backoff, workflow suspension for human-in-the-loop approval, opt-in autonomous self-reflection, and distributed queue dispatching.
 
 ### Paradigm Registry
 
@@ -541,6 +541,9 @@ export interface WorkflowConfig {
     events?: { [eventName: string]: string[] }; // Used for EVENT_DRIVEN (event -> agentIds)
     blackboard?: Record<string, any>; // Persistent shared state
     useDistributedQueue?: boolean; // Enable horizontal scalability
+    enableLearning?: boolean; // Opt-in procedural learning to avoid surprise LLM cost
+    enableReflection?: boolean; // Opt-in workflow self-reflection to avoid surprise LLM cost
+    runtime?: RuntimeContextOptions; // Optional scoped runtime services for tests/tenants
 }
 ```
 
@@ -580,7 +583,9 @@ sequenceDiagram
     end
     
     ORC->>CHK: clearCheckpoint(threadId)
-    ORC->>ORC: queueReflection()
+    opt enableReflection
+        ORC->>ORC: queueReflection()
+    end
     ORC->>EVT: append(WORKFLOW_COMPLETED)
     ORC-->>Client: result
 ```
@@ -591,11 +596,11 @@ sequenceDiagram
 - **Cycle Detection**: Tracks active dependency chains per thread, throws deadlock error if agent appears >100 times
 - **Conversational Depth Limit**: Maximum 10 nested calls per thread branch
 - **Distributed Queue Support**: When `useDistributedQueue` is true, tasks are dispatched via `QueueBroker` with 5-minute timeout
-- **Autonomous Self-Reflection**: After workflow completion, queues a non-blocking reflection that analyzes execution logs and distills wisdom mutations
+- **Autonomous Self-Reflection**: When `enableReflection` is true, queues a non-blocking reflection that analyzes execution logs and distills wisdom mutations
 
 ### Self-Reflection Engine
 
-The `runSelfReflection` method analyzes completed thread logs to extract meta-level wisdom:
+The `runSelfReflection` method analyzes completed thread logs to extract meta-level wisdom. It is opt-in because it performs additional model calls:
 
 ```typescript
 private async runSelfReflection(threadId: string, agents: BaseAgent[]) {
@@ -906,7 +911,7 @@ flowchart LR
 | Error | Source | Handling |
 |-------|--------|---------|
 | `WorkflowSuspendedError` | Orchestrator | Saves state, emits plugin hooks, returns `{ status: 'SUSPENDED', approvalId }` |
-| `WORKFLOW_RETRY_EXHAUSTED` | Orchestrator | Throws `AgentFrameworkError` with diagnostic alert, triggers self-reflection |
+| `WORKFLOW_RETRY_EXHAUSTED` | Orchestrator | Throws `AgentFrameworkError` with diagnostic alert; triggers self-reflection only when `enableReflection` is true |
 | `Conversational Deadlock` | Orchestrator | Throws when agent appears >100 times in dependency chain |
 | `Maximum conversational depth` | Orchestrator | Throws when chain exceeds 10 nested calls |
 | `Distributed task timed out` | Orchestrator | Throws when QueueBroker task exceeds 5-minute timeout |

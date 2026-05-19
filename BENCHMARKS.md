@@ -24,6 +24,7 @@ npm audit --audit-level=low
 - security and correctness regressions
 - architecture regressions
 - reliability gauntlet
+- reference app regression
 - project-submission simulations
 
 ## Latest Local Result
@@ -42,6 +43,8 @@ Environment:
 | `npm run test:architecture` | Passed |
 | `npm run test:reliability` | Passed |
 | `npm run test:state-backend` | Passed in CI with Valkey service container |
+| `npm run test:reference` | Passed |
+| `npm run example:code-review` | Passed |
 | `npm run test:projects` | Passed |
 | `npm run test` | Passed |
 | `npm run examples:check` | Passed |
@@ -100,6 +103,16 @@ Some local Windows sandbox runs may need to be rerun outside the sandbox because
 | Distributed hierarchical project | Hierarchical with distributed queue |
 
 These tests use simulation mode to avoid API spend and to keep CI deterministic.
+
+## Reference App Simulation
+
+`npm run test:reference` validates the deterministic AI code-review and release-governance example in `examples/reference-code-review`.
+
+| Case | Expected Result |
+| --- | --- |
+| Deployment webhook with request-controlled command execution | `BLOCK`, critical risk, human approval required |
+
+This scenario also guards `GRAPH` behavior for multiple root agents: independent root reviewers must each receive the original task, while the release judge receives their upstream results.
 
 ## Current Performance Signals
 

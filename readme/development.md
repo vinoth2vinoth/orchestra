@@ -32,13 +32,15 @@ npm run test:security
 npm run test:architecture
 npm run test:reliability
 npm run test:state-backend
+npm run test:reference
 npm run test:projects
+npm run example:code-review
 npm run examples:check
 npm run build
 npm audit --audit-level=low
 ```
 
-The security suite covers path safety, API auth, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The reliability suite covers checkpoint recovery, event reload, queue crash recovery, and graph resume behavior. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
+The security suite covers path safety, API auth, tool modes, and state-correctness regressions. The architecture suite covers queue behavior, runtime context, memory persistence, audit log integrity, plugin governance, and audit regressions. The reliability suite covers checkpoint recovery, event reload, queue crash recovery, and graph resume behavior. The reference suite validates the deterministic code-review and release-governance example. The project suite submits representative easy-to-complex workflow prompts through the framework simulation path.
 
 `npm run test:state-backend` requires a running Valkey or Redis-compatible key-value backend:
 
@@ -51,6 +53,15 @@ GitHub Actions runs this command against a Valkey service container. The URL use
 ## Examples
 
 The files in `examples/` are typechecked by `npm run examples:check`. They are intended as current API references and should compile without requiring live LLM calls. Examples should import from `src/framework/index.ts`, the public SDK entrypoint, instead of deep internal modules. If an example becomes aspirational or depends on an external service, mark that clearly in the file and keep the default check deterministic.
+
+The reference code-review workflow can be run without provider API spend:
+
+```bash
+npm run example:code-review
+npm run test:reference
+```
+
+Workflows that should avoid background model calls must keep `enableLearning` and `enableReflection` disabled unless the test explicitly verifies those features.
 
 ## Workspace Directory
 

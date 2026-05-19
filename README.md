@@ -192,6 +192,8 @@ npm run test:security
 npm run test:architecture
 npm run test:reliability
 npm run test:state-backend
+npm run test:reference
+npm run example:code-review
 npm run examples:check
 npm run build
 npm audit --audit-level=low
@@ -279,6 +281,15 @@ python_orchestra/  Standalone Python prototype
 ## Examples
 
 The [`examples/`](examples) directory contains small scenario files for swarm orchestration, human approval, MCP integration, consensus debate, and data-pipeline workflows.
+
+### Signature Reference App
+
+[`examples/reference-code-review`](examples/reference-code-review) is a deterministic AI code-review and release-governance workflow. It runs a `GRAPH` workflow with specialist security, architecture, and test reviewers feeding a release judge. The default scenario blocks a risky deployment webhook and requires human approval, without spending provider API tokens.
+
+```bash
+npm run example:code-review
+npm run test:reference
+```
 
 These examples are typechecked by `npm run examples:check` so API drift is caught before merge. Prefer `npm run test` and `npm run check` when validating framework behavior.
 

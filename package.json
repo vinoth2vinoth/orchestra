@@ -14,8 +14,10 @@
     "test:architecture": "tsx workspace/architecture_queue_regression_tests.ts && tsx workspace/runtime_context_regression_tests.ts && tsx workspace/memory_persistence_regression_tests.ts && tsx workspace/audit_log_regression_tests.ts && tsx workspace/plugin_governance_regression_tests.ts && tsx workspace/claude_audit_regression_tests.ts",
     "test:reliability": "tsx workspace/reliability_gauntlet_tests.ts",
     "test:state-backend": "tsx workspace/state_backend_durability_tests.ts",
+    "test:reference": "tsx workspace/reference_code_review_tests.ts",
     "test:projects": "tsx workspace/audit_project_submission_tests.ts",
-    "test": "npm run test:core && npm run test:security && npm run test:architecture && npm run test:reliability && npm run test:projects",
+    "test": "npm run test:core && npm run test:security && npm run test:architecture && npm run test:reliability && npm run test:reference && npm run test:projects",
+    "example:code-review": "tsx examples/reference-code-review/run.ts",
     "examples:check": "tsc -p tsconfig.examples.json --noEmit",
     "check": "npm run lint && npm run test && npm run examples:check && npm run build"
   },

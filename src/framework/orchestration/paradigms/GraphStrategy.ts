@@ -61,7 +61,7 @@ export class GraphStrategy extends ParadigmStrategy {
                 const dependencies = incoming.get(agentId) || [];
                 const agentTask = dependencies.length > 0
                     ? `Original task: ${JSON.stringify(task)}\n\nUpstream Results:\n${dependencies.map(dep => `[${dep}]: ${JSON.stringify(results.get(dep))}`).join('\n')}`
-                    : currentState;
+                    : task;
 
                 currentState = await context.executeAgentTask(agent, agentTask, context.threadId, blackboard);
                 results.set(agentId, currentState);

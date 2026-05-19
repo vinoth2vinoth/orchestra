@@ -32,6 +32,7 @@ export interface WorkflowConfig {
     blackboard?: Record<string, any>; // Persistent shared state
     useDistributedQueue?: boolean; // Enable horizontal scalability
     enableLearning?: boolean; // Opt-in procedural learning to avoid surprise LLM cost
+    enableReflection?: boolean; // Opt-in workflow self-reflection to avoid surprise LLM cost
     runtime?: RuntimeContextOptions; // Optional scoped runtime services for tests/tenants
 }
 
@@ -139,6 +140,7 @@ export class Orchestrator {
         const workflowSpan = TelemetrySystem.getActiveSpan(workflowSpanId);
 
         const maxRetries = config.maxRetries ?? 1;
+        const enableReflection = config.enableReflection === true;
         let attempt = 0;
         let result;
 
@@ -223,7 +225,9 @@ export class Orchestrator {
                     
                     // Trigger Autonomous Self-Reflection (Dimension 07)
                     // We reflect on why the workflow exhausted its retries
-                    this.queueReflection(threadId, config.agents);
+                    if (enableReflection) {
+                        this.queueReflection(threadId, config.agents);
+                    }
                     
                     throw finalErr;
                 }
@@ -254,7 +258,9 @@ export class Orchestrator {
 
         // Trigger Autonomous Self-Reflection (Dimension 07)
         // This is non-blocking and queued to avoid LLM burst saturation
-        this.queueReflection(threadId, config.agents);
+        if (enableReflection) {
+            this.queueReflection(threadId, config.agents);
+        }
 
         return result;
     }
