@@ -27,6 +27,23 @@ export class WBFTConsensus {
         return this.beta * trust + this.alpha * 1.0;
     }
 
+    private tokenize(answer: string): Set<string> {
+        return new Set(answer.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean));
+    }
+
+    private similarity(a: string, b: string): number {
+        const left = this.tokenize(a);
+        const right = this.tokenize(b);
+        if (left.size === 0 && right.size === 0) return 1;
+
+        let overlap = 0;
+        for (const token of left) {
+            if (right.has(token)) overlap++;
+        }
+
+        return (2 * overlap) / (left.size + right.size);
+    }
+
     public async reachConsensus(task: any, agents: BaseAgent[], threadId: string): Promise<string> {
         // Collect independent predictions in parallel for high performance
         const votePromises = agents.map(async (agent) => {
@@ -49,34 +66,33 @@ export class WBFTConsensus {
             throw new Error("No agents were able to provide a vote for consensus.");
         }
 
-        // Group identical answers (simplified clustering for exact match)
-        const answerWeights = new Map<string, number>();
-        const answerCounts = new Map<string, number>();
+        const clusters: Array<{ representative: string; weight: number; count: number; answers: string[] }> = [];
 
         for (const vote of votes) {
             const weight = this.getAgentWeight(vote.agentId);
-            
-            const currentWeight = answerWeights.get(vote.proposedAnswer) || 0;
-            answerWeights.set(vote.proposedAnswer, currentWeight + weight);
-
-            const currentCount = answerCounts.get(vote.proposedAnswer) || 0;
-            answerCounts.set(vote.proposedAnswer, currentCount + 1);
+            const cluster = clusters.find(c => this.similarity(c.representative, vote.proposedAnswer) >= 0.7);
+            if (cluster) {
+                cluster.weight += weight;
+                cluster.count += 1;
+                cluster.answers.push(vote.proposedAnswer);
+            } else {
+                clusters.push({
+                    representative: vote.proposedAnswer,
+                    weight,
+                    count: 1,
+                    answers: [vote.proposedAnswer]
+                });
+            }
         }
 
         // Find the answer with highest total weight
-        let bestAnswer = '';
-        let maxWeight = -1;
-
-        answerWeights.forEach((weight, answer) => {
-            if (weight > maxWeight) {
-                maxWeight = weight;
-                bestAnswer = answer;
-            }
-        });
+        const bestCluster = clusters.sort((a, b) => b.weight - a.weight)[0];
+        const bestAnswer = bestCluster.representative;
+        const maxWeight = bestCluster.weight;
 
         // Determine if (2f+1)/n threshold of total vote weights is met
         const totalPossibleWeight = agents.reduce((sum, a) => sum + this.getAgentWeight(a.card.id), 0);
-        const bestAnswerCount = answerCounts.get(bestAnswer) || 0;
+        const bestAnswerCount = bestCluster.count;
         
         // H3 Remediation: Require both numeric majority AND weight majority
         const weightThresholdMet = maxWeight >= totalPossibleWeight * 0.66;

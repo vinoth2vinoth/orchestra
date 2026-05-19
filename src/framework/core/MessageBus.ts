@@ -12,39 +12,27 @@ export class LocalMessageBus implements IMessageBus {
     private handlers: Map<string, Array<(message: any) => void>> = new Map();
     private eventCount = 0;
     private lastReset = Date.now();
-    private isTripped = false;
     private readonly RATE_LIMIT = 1000; // Max events per second
     private readonly WINDOW_MS = 1000;
+    private droppedMessages = 0;
+    private throttledMessages = 0;
 
     async publish(topic: string, message: any): Promise<void> {
-        if (this.isTripped) {
-            console.error(`[MessageBus] CIRCUIT BREAKER ACTIVE. Dropping message on topic: ${topic}`);
-            return;
-        }
-
-        const now = Date.now();
+        let now = Date.now();
         if (now - this.lastReset > this.WINDOW_MS) {
             this.eventCount = 0;
             this.lastReset = now;
         }
 
-        this.eventCount++;
-
         if (this.eventCount > this.RATE_LIMIT) {
-            this.isTripped = true;
-            console.error(`[MessageBus] EVENT STORM DETECTED! Rate limit ${this.RATE_LIMIT} exceeded. Circuit breaker tripped.`);
-            
-            // Auto-reset after 10 seconds
-            setTimeout(() => {
-                this.isTripped = false;
-                this.eventCount = 0;
-                this.lastReset = Date.now();
-                console.log(`[MessageBus] Circuit breaker reset.`);
-            }, 10000);
-
-            return;
+            this.throttledMessages++;
+            const waitMs = Math.max(1, this.WINDOW_MS - (now - this.lastReset));
+            await new Promise(resolve => setTimeout(resolve, waitMs));
+            this.eventCount = 0;
+            this.lastReset = Date.now();
         }
 
+        this.eventCount++;
         const topicHandlers = this.handlers.get(topic) || [];
         // Use setImmediate/setTimeout to simulate async distributed nature
         topicHandlers.forEach(h => setTimeout(() => h(message), 0));
@@ -60,6 +48,19 @@ export class LocalMessageBus implements IMessageBus {
             this.handlers.set(topic, list.filter(h => h !== handler));
         };
     }
+
+    public getDiagnostics() {
+        return {
+            droppedMessages: this.droppedMessages,
+            throttledMessages: this.throttledMessages,
+            eventCount: this.eventCount
+        };
+    }
+
+    public resetDiagnostics() {
+        this.droppedMessages = 0;
+        this.throttledMessages = 0;
+    }
 }
 
-export const globalMessageBus: IMessageBus = new LocalMessageBus();
+export const globalMessageBus = new LocalMessageBus();

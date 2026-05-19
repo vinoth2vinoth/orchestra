@@ -3,7 +3,7 @@ import { globalStateAdapter } from '../core/StateAdapter.ts';
 import { globalMessageBus } from '../core/MessageBus.ts';
 
 export interface StressResults {
-    eventOps: { countCount: number; durationMs: number; throughput: number };
+    eventOps: { count: number; durationMs: number; throughput: number };
     stateOps: { count: number; durationMs: number; collisions: number };
     syncCheck: { primaryCount: number; secondaryCount: number; inSync: boolean };
 }
@@ -15,8 +15,9 @@ export class InfraStressor {
     /**
      * Spams the EventStore with high-frequency telemetry and system events.
      */
-    public static async stressEventStore(count: number = 1000): Promise<{ countCount: number; durationMs: number; throughput: number }> {
+    public static async stressEventStore(count: number = 1000): Promise<{ count: number; durationMs: number; throughput: number }> {
         const start = Date.now();
+        globalMessageBus.resetDiagnostics?.();
         const promises = [];
         
         for (let i = 0; i < count; i++) {
@@ -29,10 +30,15 @@ export class InfraStressor {
         }
 
         await Promise.all(promises);
+        await new Promise(resolve => setTimeout(resolve, 25));
         const duration = Date.now() - start;
+        const busDiagnostics = globalMessageBus.getDiagnostics?.();
+        if (busDiagnostics?.droppedMessages > 0) {
+            throw new Error(`MessageBus dropped ${busDiagnostics.droppedMessages} events during stress test.`);
+        }
         
         return {
-            countCount: count,
+            count,
             durationMs: duration,
             throughput: Math.round((count / duration) * 1000)
         };
@@ -52,14 +58,12 @@ export class InfraStressor {
         const promises = [];
         for (let i = 0; i < count; i++) {
             promises.push((async () => {
-                // Read-Modify-Write attempt
-                const current = await globalStateAdapter.get<any>(bbKey) || { counter: 0 };
-                const nextVal = current.counter + 1;
-                
                 // Simulate some work
                 await new Promise(r => setTimeout(r, Math.random() * 5));
-                
-                await globalStateAdapter.set(bbKey, { counter: nextVal });
+
+                await globalStateAdapter.mutate<{ counter: number }>(bbKey, current => ({
+                    counter: (current?.counter || 0) + 1
+                }));
             })());
         }
 
@@ -70,6 +74,9 @@ export class InfraStressor {
         // This is a naive increment; in a truly concurrent system without locking, 
         // final.counter would be < count. We use this to detect collision risk.
         collisions = count - (final?.counter || 0);
+        if (collisions !== 0) {
+            throw new Error(`StateAdapter lost ${collisions} concurrent updates.`);
+        }
 
         return { count, durationMs: duration, collisions };
     }
@@ -81,10 +88,10 @@ export class InfraStressor {
         console.log('--- STARTING INFRA STRESS TEST ---');
         
         const eventRes = await this.stressEventStore(2000);
-        console.log(`[EventStore] Appended ${eventRes.countCount} events in ${eventRes.durationMs}ms (${eventRes.throughput} ops/sec)`);
+        console.log(`[EventStore] Appended ${eventRes.count} events in ${eventRes.durationMs}ms (${eventRes.throughput} ops/sec)`);
 
         const stateRes = await this.stressStateAdapter(500);
-        console.log(`[StateAdapter] Completed ${stateRes.count} RMW ops. Collisions detected: ${stateRes.collisions} (expected if no locking)`);
+        console.log(`[StateAdapter] Completed ${stateRes.count} atomic ops. Collisions detected: ${stateRes.collisions}`);
 
         const logs = globalEventStore.getLogs().filter(e => e.threadId === 'STRESS_TEST');
         

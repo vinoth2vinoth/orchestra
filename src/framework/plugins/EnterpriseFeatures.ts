@@ -1,6 +1,6 @@
-import { AgenticPlugin, CacheHitException, HumanApprovalRequiredException, globalPluginRegistry } from '../core/PluginRegistry.js';
-import { globalEventStore } from '../core/EventStore.js';
-import { TelemetrySystem } from '../telemetry/TelemetrySystem.js';
+import { AgenticPlugin, CacheHitException, HumanApprovalRequiredException, globalPluginRegistry } from '../core/PluginRegistry.ts';
+import { globalEventStore } from '../core/EventStore.ts';
+import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
 import crypto from 'crypto';
 
 // 1. Data Loss Prevention (DLP) - Security Governance
@@ -77,21 +77,33 @@ export class SemanticCachePlugin implements AgenticPlugin {
     name = 'SemanticCachePlugin';
     version = '1.0.0';
     // Fast O(1) hash cache for repeated identical objectives. Real implementations connect to Pinecone/Redis.
-    private cache = new Map<string, any>(); 
+    private cache = new Map<string, { result: any; expiresAt: number }>();
+    private readonly ttlMs = Number(process.env.ORCHESTRA_SEMANTIC_CACHE_TTL_MS || 60 * 60 * 1000);
+    private readonly maxEntries = Number(process.env.ORCHESTRA_SEMANTIC_CACHE_MAX_ENTRIES || 10000);
 
     async beforeAgentExecute(agentId: string, task: any, threadId: string) {
         const taskStr = typeof task === 'string' ? task : JSON.stringify(task);
         const taskHash = crypto.createHash('sha256').update(agentId + '_' + taskStr).digest('hex');
         
-        if (this.cache.has(taskHash)) {
-            throw new CacheHitException(this.cache.get(taskHash));
+        const entry = this.cache.get(taskHash);
+        if (entry && Date.now() < entry.expiresAt) {
+            throw new CacheHitException(entry.result);
+        }
+
+        if (entry) {
+            this.cache.delete(taskHash);
         }
     }
 
     async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
         const taskStr = typeof task === 'string' ? task : JSON.stringify(task);
         const taskHash = crypto.createHash('sha256').update(agentId + '_' + taskStr).digest('hex');
-        this.cache.set(taskHash, result);
+        this.cache.set(taskHash, { result, expiresAt: Date.now() + this.ttlMs });
+        while (this.cache.size > this.maxEntries) {
+            const oldestKey = this.cache.keys().next().value;
+            if (!oldestKey) break;
+            this.cache.delete(oldestKey);
+        }
         return result;
     }
 }
@@ -1233,17 +1245,25 @@ export class AutoReflectionCriticPlugin implements AgenticPlugin {
 
 // Convenience function to bootstrap all enterprise features
 export function registerEnterpriseFeatures() {
+    const registerExperimental = (plugin: AgenticPlugin) => {
+        if (process.env.ORCHESTRA_ENABLE_EXPERIMENTAL_PLUGINS === 'true') {
+            globalPluginRegistry.register(plugin);
+        }
+    };
+
     globalPluginRegistry.register(new DataLossPreventionPlugin());
     globalPluginRegistry.register(new TokenBudgetPlugin());
     globalPluginRegistry.register(new SemanticCachePlugin());
     globalPluginRegistry.register(new AuditTrailPlugin());
     globalPluginRegistry.register(new MetricsExportPlugin());
-    globalPluginRegistry.register(new GroundednessEvaluatorPlugin());
+    if (process.env.ORCHESTRA_ENABLE_STUB_GROUNDEDNESS === 'true') {
+        globalPluginRegistry.register(new GroundednessEvaluatorPlugin());
+    }
     globalPluginRegistry.register(new ModelRouterPlugin());
     globalPluginRegistry.register(new OpenTelemetryTracingPlugin());
     globalPluginRegistry.register(new ZeroTrustRBACPlugin());
     globalPluginRegistry.register(new ContinuousAlignmentPlugin());
-    globalPluginRegistry.register(new ShadowModePlugin());
+    registerExperimental(new ShadowModePlugin());
     globalPluginRegistry.register(new ContextCompressionPlugin());
     globalPluginRegistry.register(new JailbreakDefensePlugin());
     globalPluginRegistry.register(new SelfHealingRetryPlugin());
@@ -1251,23 +1271,25 @@ export function registerEnterpriseFeatures() {
     globalPluginRegistry.register(new EventStreamerPlugin());
     globalPluginRegistry.register(new HumanInTheLoopApprovalPlugin());
     globalPluginRegistry.register(new DataSovereigntyRoutingPlugin());
-    globalPluginRegistry.register(new AgentTrajectoryDistillationPlugin());
+    registerExperimental(new AgentTrajectoryDistillationPlugin());
     globalPluginRegistry.register(new SecretManagerPlugin());
-    globalPluginRegistry.register(new FederatedAgentRouterPlugin());
-    globalPluginRegistry.register(new SecureCodeSandboxPlugin());
-    globalPluginRegistry.register(new MultimodalIngestionPlugin());
+    registerExperimental(new FederatedAgentRouterPlugin());
+    if (process.env.ORCHESTRA_ENABLE_CODE_SANDBOX === 'true') {
+        globalPluginRegistry.register(new SecureCodeSandboxPlugin());
+    }
+    registerExperimental(new MultimodalIngestionPlugin());
     
     // New cutting-edge plugins
-    globalPluginRegistry.register(new FinOpsChargebackPlugin());
-    globalPluginRegistry.register(new MoAConsensusPlugin());
-    globalPluginRegistry.register(new ExplainableAIPlugin());
-    globalPluginRegistry.register(new BlockchainAuditTrailPlugin());
+    registerExperimental(new FinOpsChargebackPlugin());
+    registerExperimental(new MoAConsensusPlugin());
+    registerExperimental(new ExplainableAIPlugin());
+    registerExperimental(new BlockchainAuditTrailPlugin());
     globalPluginRegistry.register(new CircuitBreakerPlugin());
     globalPluginRegistry.register(new StructuredOutputEnforcerPlugin());
-    globalPluginRegistry.register(new AutoPromptOptimizerPlugin());
+    registerExperimental(new AutoPromptOptimizerPlugin());
     globalPluginRegistry.register(new SLAEnforcerPlugin());
     globalPluginRegistry.register(new DurableExecutionPlugin());
-    globalPluginRegistry.register(new AutoReflectionCriticPlugin());
+    registerExperimental(new AutoReflectionCriticPlugin());
     
     console.log('[Orchestra Enterprise] All Governance modules loaded successfully.');
 }

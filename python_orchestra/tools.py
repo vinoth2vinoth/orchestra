@@ -77,9 +77,9 @@ class ToolRegistry:
         self.tools[tool.name] = tool
         
     def select_tool(self, task_context: str, domain: str) -> str:
-        \"\"\"
+        """
         Selects best tool enforcing DO NOT USE WHEN anti-patterns.
-        \"\"\"
+        """
         logger.info(f"Selecting tools for domain: {domain}")
         candidate = None
         

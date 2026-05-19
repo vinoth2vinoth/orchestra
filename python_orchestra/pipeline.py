@@ -6,10 +6,10 @@ from escalation import ReclassificationGate
 logger = logging.getLogger("Pipeline")
 
 class Level1Pipeline:
-    \"\"\"
+    """
     Enforces 500 token hard cap, zero loops, direct output.
     Calls ReclassificationGate before any escalation.
-    \"\"\"
+    """
     def __init__(self, agent, tools, reclassification_gate: ReclassificationGate):
         self.agent = agent
         self.tools = tools
@@ -28,9 +28,9 @@ class Level1Pipeline:
         return result
 
 class Level3Pipeline:
-    \"\"\"
+    """
     Worker -> Reviewer -> Return flow, single loop
-    \"\"\"
+    """
     def __init__(self, worker_agent, reviewer_agent):
         self.worker = worker_agent
         self.reviewer = reviewer_agent
@@ -47,10 +47,10 @@ class Level3Pipeline:
         return output
 
 class Level45Pipeline:
-    \"\"\"
+    """
     Decomposes task into atomic_units.
     Uses ThreadPoolExecutor to run worker threads in parallel.
-    \"\"\"
+    """
     def __init__(self, worker_agent, critic_agent):
         self.worker = worker_agent
         self.critic = critic_agent
@@ -86,7 +86,7 @@ class Level45Pipeline:
         return combined_output
 
 class PipelineRouter:
-    \"\"\"Selects correct pipeline based on escalation level\"\"\"
+    """Selects correct pipeline based on escalation level"""
     def __init__(self, worker, reviewer, critic, tools, reclassification_gate):
         self.pipelines = {
             1: Level1Pipeline(worker, tools, reclassification_gate),

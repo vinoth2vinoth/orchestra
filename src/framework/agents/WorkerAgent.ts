@@ -1,7 +1,7 @@
 import { BaseAgent } from './BaseAgent.ts';
 import { globalGenealogy } from '../governance/GenealogyTracker.ts';
 import { globalRegistry } from './AgentRegistry.ts';
-import { globalEventStore } from '../core/EventStore.js';
+import { globalEventStore } from '../core/EventStore.ts';
 import { Sanitizer } from '../security/Sanitizer.ts';
 import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
 

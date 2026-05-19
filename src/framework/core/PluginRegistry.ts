@@ -35,12 +35,19 @@ export interface AgenticPlugin {
     onLLMResponse?: (agentId: string, response: any, usage: any, threadId: string) => Promise<void>;
 }
 
-class PluginRegistry {
+export class PluginRegistry {
     private plugins: AgenticPlugin[] = [];
 
     public register(plugin: AgenticPlugin) {
+        if (this.plugins.some(existing => existing.name === plugin.name)) {
+            return;
+        }
         this.plugins.push(plugin);
         console.log(`[PluginRegistry] Registered Plugin: ${plugin.name} v${plugin.version}`);
+    }
+
+    public listPlugins(): Array<{ name: string; version: string }> {
+        return this.plugins.map(plugin => ({ name: plugin.name, version: plugin.version }));
     }
 
     public async emitBeforeAgentExecute(agentId: string, task: any, threadId: string): Promise<any> {

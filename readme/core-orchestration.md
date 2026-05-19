@@ -417,6 +417,7 @@ flowchart LR
 
 | Variable | Default | Used By | Purpose |
 |----------|---------|---------|---------|
+| `ORCHESTRA_STATE_ADAPTER` | `memory` | `StateAdapter` | Set to `redis` for durable distributed queue/state |
 | `REDIS_URL` | `redis://localhost:6379` | `RedisMessageBus`, `RedisStateAdapter` | Distributed messaging and state |
 | `MAX_CONCURRENCY` | `8` | `WorkerPool` | Resource throttling limit |
 

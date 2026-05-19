@@ -1,19 +1,14 @@
 import { BaseAgent } from '../agents/BaseAgent.ts';
-import { AgentFrameworkError } from '../core/ErrorHandler.ts';
+import { AgentFrameworkError, ConfigurationError } from '../core/ErrorHandler.ts';
 import { globalEventStore } from '../core/EventStore.ts';
 import { WorkflowSuspendedError } from './WorkflowSuspendedError.ts';
 import { globalStateStore } from './StateStore.ts';
 import { globalEscalationManager } from '../governance/EscalationManager.ts';
 import { ProviderRegistry } from '../llm/ProviderRegistry.ts';
-import { globalPluginRegistry } from '../core/PluginRegistry.ts';
-import { globalCircuitBreaker } from '../resilience/CircuitBreaker.ts';
 import { globalCheckpointer } from './Checkpointer.ts';
-import { globalQueueBroker } from './QueueBroker.ts';
-import { globalWorkerPool } from '../core/WorkerPool.ts';
-import { globalPolicyEngine } from '../governance/PolicyEngine.ts';
-import { globalAuditLog } from '../governance/AuditLog.ts';
 import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
 import { Sanitizer } from '../security/Sanitizer.ts';
+import { RuntimeContextOptions, RuntimeServices, createRuntimeContext } from '../core/RuntimeContext.ts';
 import { ParadigmStrategy } from './paradigms/ParadigmStrategy.ts';
 import { HierarchicalStrategy } from './paradigms/HierarchicalStrategy.ts';
 import { ConsensusStrategy } from './paradigms/ConsensusStrategy.ts';
@@ -36,6 +31,8 @@ export interface WorkflowConfig {
     events?: { [eventName: string]: string[] }; // Used for EVENT_DRIVEN (event -> agentIds)
     blackboard?: Record<string, any>; // Persistent shared state
     useDistributedQueue?: boolean; // Enable horizontal scalability
+    enableLearning?: boolean; // Opt-in procedural learning to avoid surprise LLM cost
+    runtime?: RuntimeContextOptions; // Optional scoped runtime services for tests/tenants
 }
 
 /**
@@ -48,8 +45,10 @@ export class Orchestrator {
     private readonly MAX_CONCURRENT_REFLECTIONS = 5;
     private readonly MAX_REFLECTION_QUEUE_SIZE = 100;
     private paradigmRegistry: Map<Paradigm, ParadigmStrategy> = new Map();
+    private runtime: RuntimeServices;
 
-    constructor() {
+    constructor(runtime: RuntimeContextOptions = {}) {
+        this.runtime = createRuntimeContext(runtime);
         this.paradigmRegistry.set('HIERARCHICAL', new HierarchicalStrategy());
         this.paradigmRegistry.set('CONSENSUS', new ConsensusStrategy());
         this.paradigmRegistry.set('SWARM', new SwarmStrategy());
@@ -123,6 +122,7 @@ export class Orchestrator {
     }
 
     public async executeWorkflow(task: any, config: WorkflowConfig, threadId: string): Promise<any> {
+        const workflowRuntime = config.runtime ? createRuntimeContext({ ...this.runtime, ...config.runtime }) : this.runtime;
         globalEventStore.append({
             type: 'LLM_GENERATION_STARTED', // Loosely representing workflow start
             sourceAgentId: 'ORCHESTRATOR',
@@ -152,7 +152,7 @@ export class Orchestrator {
                     result = await strategy.run(task, sortedAgents, {
                         threadId,
                         blackboard: config.blackboard,
-                        executeAgentTask: (agent, task, tid, bb, ps) => this.executeAgentTask(agent, task, tid, config.paradigm, bb, ps || workflowSpan),
+                        executeAgentTask: (agent, task, tid, bb, ps) => this.executeAgentTask(agent, task, tid, config.paradigm, bb, ps || workflowSpan, config.enableLearning === true, workflowRuntime),
                         parentSpan: workflowSpan
                     }, config);
                 } else {
@@ -183,7 +183,7 @@ export class Orchestrator {
                     };
                     await globalStateStore.saveState(error.approvalId, stateToSave);
                     
-                    await globalPluginRegistry.emitOnWorkflowSleep(threadId, stateToSave);
+                    await workflowRuntime.pluginRegistry.emitOnWorkflowSleep(threadId, stateToSave);
                     
                     globalEventStore.append({
                         type: 'WORKFLOW_COMPLETED', // Or suspended
@@ -193,6 +193,11 @@ export class Orchestrator {
                     });
                     
                     return { status: 'SUSPENDED', approvalId: error.approvalId };
+                }
+
+                if (error instanceof ConfigurationError || error.name === 'ConfigurationError') {
+                    TelemetrySystem.endSpan(workflowSpanId, error);
+                    throw error;
                 }
 
                 attempt++;
@@ -289,7 +294,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
             // Use the top-priority agent (usually Manager) to reflect
             const reflector = agents[0];
             const policyConfig = { ...reflector.llmConfig, tier: 'POLICY' as const };
-            const response = await globalCircuitBreaker.execute(async () => {
+            const response = await this.runtime.circuitBreakers.execute(`reflection:${reflector.card.id}`, async () => {
                 return await ProviderRegistry.generate(policyConfig, systemPrompt, [{ role: 'user', content: reflectionTask }]);
             }, async () => ({ text: 'NO_META_LEARNING', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } }));
 
@@ -331,7 +336,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
 
         await globalEscalationManager.resolveApproval(approvalId, resolution, feedback);
         await globalStateStore.deleteState(approvalId);
-        await globalPluginRegistry.emitOnWorkflowResume(state.threadId, state);
+        await this.runtime.pluginRegistry.emitOnWorkflowResume(state.threadId, state);
         
         globalEventStore.append({
             type: 'SYSTEM_HOOK',
@@ -356,7 +361,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
         return this.executeWorkflow(resumedTask, resumedConfig, state.threadId);
     }
     
-    private async executeAgentTask(agent: BaseAgent, task: any, threadId: string, paradigm: string, blackboard?: Record<string, any>, parentSpan?: any): Promise<any> {
+    private async executeAgentTask(agent: BaseAgent, task: any, threadId: string, paradigm: string, blackboard?: Record<string, any>, parentSpan?: any, enableLearning: boolean = false, runtime: RuntimeServices = this.runtime): Promise<any> {
         const spanId = `agent_exec_${agent.card.id}_${Date.now()}`;
         // --- RELIABILITY: CYCLE DETECTION ---
         const chain = this.activeDependencyChains.get(threadId) || [];
@@ -385,7 +390,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     payload: { from: 'Local', to: 'QueueBroker', message: `Dispatching to Distributed Queue for ${agent.card.name}` }
                 });
 
-                const publishPromise = globalQueueBroker.publish({
+                const publishPromise = runtime.queueBroker.publish({
                     taskId: `task_${Date.now()}_${crypto.randomUUID().substring(0, 8)}`,
                     threadId,
                     agentId: agent.card.id,
@@ -441,15 +446,15 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 TelemetrySystem.startSpan(spanId, parentSpan);
 
                 // --- GOVERNANCE: Policy Check (Dimension 05) ---
-                const policyResult = globalPolicyEngine.evaluate(currentTask, agent.card.id, threadId);
+                const policyResult = runtime.policyEngine.evaluate(currentTask, agent.card.id, threadId);
                 if (policyResult.status === 'RED') {
                     throw new Error(`Execution Blocked by Policy Engine: ${policyResult.violations.join(', ')}`);
                 }
                 
-                await globalAuditLog.log(threadId, agent.card.id, 'AGENT_EXECUTION_START', `Agent ${agent.card.name} started task execution under paradigm ${paradigm}`);
+                await runtime.auditLog.log(threadId, agent.card.id, 'AGENT_EXECUTION_START', `Agent ${agent.card.name} started task execution under paradigm ${paradigm}`);
 
                 try {
-                    currentTask = await globalPluginRegistry.emitBeforeAgentExecute(agent.card.id, currentTask, threadId);
+                    currentTask = await runtime.pluginRegistry.emitBeforeAgentExecute(agent.card.id, currentTask, threadId);
                 } catch (e: any) {
                     if (e.name === 'CacheHitException') {
                         // Cache Hit! Short-circuit LLM.
@@ -464,7 +469,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 
                 // Execute within execution context for RBAC & Secret bindings
                 let contextConfig = {
-                    tenantId: blackboard?._tenantId || 'GLOBAL', 
+                    tenantId: blackboard?._tenantId || runtime.tenantId, 
                     agentId: agent.card.id,
                     threadId,
                     capabilities: agent.card.capabilities
@@ -473,16 +478,17 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 const { runWithContext } = await import('../core/ExecutionContext.ts');
 
                 // --- RELIABILITY: TIMEOUT WRAPPER ---
-                let result = await globalCircuitBreaker.execute(async () => {
+                const breakerKey = `${contextConfig.tenantId}:${agent.card.id}:${agent.llmConfig.modelName || 'default'}`;
+                let result = await runtime.circuitBreakers.execute(breakerKey, async () => {
                     return await runWithContext(contextConfig, async () => {
                         // --- PERFORMANCE: WorkerPool Concurrency Lock (Dimension 06) ---
-                        return await globalWorkerPool.run(async () => {
+                        return await runtime.workerPool.run(async () => {
                             return await agent.execute(currentTask, threadId);
                         }, agent.card.id, threadId);
                     });
                 }, undefined, this.MAX_SILENCE_TIMEOUT_MS);
                 
-                result = await globalPluginRegistry.emitAfterAgentExecute(agent.card.id, currentTask, result, threadId);
+                result = await runtime.pluginRegistry.emitAfterAgentExecute(agent.card.id, currentTask, result, threadId);
                 
                 const duration = TelemetrySystem.endSpan(spanId);
                 globalEventStore.append({
@@ -492,7 +498,9 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     payload: { action: 'AGENT_EXECUTION_COMPLETED', duration, status: 'SUCCESS' }
                 });
 
-                await this.consolidateAgentLearning(agent, currentTask, result, null, threadId);
+                if (enableLearning) {
+                    await this.consolidateAgentLearning(agent, currentTask, result, null, threadId);
+                }
                 return result;
             } catch (error: any) {
                 const duration = TelemetrySystem.endSpan(spanId, error);
@@ -503,17 +511,22 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     payload: { action: 'AGENT_EXECUTION_COMPLETED', duration, status: 'FAILED', error: error.message }
                 });
 
-                const recovery = await globalPluginRegistry.emitOnAgentFault(agent.card.id, error, currentTask, threadId);
+                const recovery = await runtime.pluginRegistry.emitOnAgentFault(agent.card.id, error, currentTask, threadId);
                 if (recovery && recovery.recovered) {
                     return recovery.result;
                 }
-                await this.consolidateAgentLearning(agent, currentTask, null, error, threadId);
+                if (enableLearning) {
+                    await this.consolidateAgentLearning(agent, currentTask, null, error, threadId);
+                }
                 throw error;
             }
         } finally {
             // Pop from dependency chain when execution (successful or failed) finishes
             const currentChain = this.activeDependencyChains.get(threadId) || [];
-            this.activeDependencyChains.set(threadId, currentChain.filter(id => id !== agent.card.id));
+            const nextChain = [...currentChain];
+            const idx = nextChain.lastIndexOf(agent.card.id);
+            if (idx !== -1) nextChain.splice(idx, 1);
+            this.activeDependencyChains.set(threadId, nextChain);
         }
     }
 
@@ -526,7 +539,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
             }];
             
             const policyConfig = { ...agent.llmConfig, tier: 'POLICY' as const };
-            const response = await globalCircuitBreaker.execute(async () => {
+            const response = await this.runtime.circuitBreakers.execute(`learning:${agent.card.id}:${agent.llmConfig.modelName || 'default'}`, async () => {
                 return await ProviderRegistry.generate(policyConfig, systemPrompt, messages);
             }, async () => ({ text: 'NO_LEARNING', usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } }));
             

@@ -12,7 +12,7 @@ class ValidationResult:
     extra_fields: List[str]
 
 class DataIntegrityValidator:
-    \"\"\"Recursively verifies structural integrity for data transformation tasks.\"\"\"
+    """Recursively verifies structural integrity for data transformation tasks."""
     
     def _count_leaf_nodes(self, node: Any, path: str = "") -> dict:
         leaves = {}
@@ -43,7 +43,7 @@ class DataIntegrityValidator:
         return ValidationResult(passed=passed, missing_fields=missing, extra_fields=extra)
 
 class WebResearchValidator:
-    \"\"\"Handles verification bounds for web context to prevent hallucinations.\"\"\"
+    """Handles verification bounds for web context to prevent hallucinations."""
     
     def validate_retrieval(self, context: Any) -> Dict[str, str]:
         logger.info("Validating Web Research retrieval context (Hard-Stop check).")
@@ -61,7 +61,7 @@ class WebResearchValidator:
         return {}
 
 class CodeQualityValidator:
-    \"\"\"Deep statical analyzer for baseline requirements in Code Generation.\"\"\"
+    """Deep statical analyzer for baseline requirements in Code Generation."""
     
     def validate_code(self, code: str, language: str) -> Tuple[bool, List[str]]:
         logger.info(f"Validating {language} source code quality.")

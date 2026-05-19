@@ -1,4 +1,4 @@
-import { globalToolRegistry } from './ToolRegistry.js';
+import { globalToolRegistry } from './ToolRegistry.ts';
 
 export class MCPClient {
     // Connects to an MCP-compliant web server to discover remote tools

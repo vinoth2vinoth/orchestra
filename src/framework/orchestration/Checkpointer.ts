@@ -22,6 +22,12 @@ export class StateCheckpointer {
 
     constructor() {
         // Derive stability key from env or fallback (in prod this must be a secret)
+        if (!process.env.ORCHESTRA_ENCRYPTION_KEY) {
+            if (process.env.NODE_ENV === 'production') {
+                throw new Error('FATAL: ORCHESTRA_ENCRYPTION_KEY must be set in production.');
+            }
+            console.warn('[Checkpointer] WARNING: Using insecure default encryption key. Set ORCHESTRA_ENCRYPTION_KEY for persisted checkpoints.');
+        }
         const secret = process.env.ORCHESTRA_ENCRYPTION_KEY || 'default-framework-key-do-not-use-in-prod';
         this.masterKey = createHash('sha256').update(secret).digest();
     }
@@ -93,7 +99,7 @@ export class StateCheckpointer {
      */
     public async clearCheckpoint(threadId: string): Promise<void> {
         try {
-            await globalStorageMesh.writeFile(`.orchestra/checkpoints/${threadId}.enc`, 'COMPLETED_AND_CLEARED');
+            await globalStorageMesh.deleteFile(`.orchestra/checkpoints/${threadId}.enc`);
         } catch (err) {
             // Ignore if file doesn't exist
         }

@@ -84,7 +84,11 @@ export class EventStore {
         // 1. Persist to shared state
         globalStateAdapter.pushToList('framework_events', fullEvent);
 
-        // 2. Publish to distributed bus - this will trigger internalAppend globally
+        // 2. Append locally immediately. The bus may throttle cross-node fanout,
+        // but the origin node must not lose its own audit/event record.
+        this.internalAppend(fullEvent);
+
+        // 3. Publish to distributed bus - duplicate local delivery is ignored by ID
         globalMessageBus.publish('FRAMEWORK_EVENTS', fullEvent);
         
         return fullEvent;

@@ -1,8 +1,8 @@
 import { z } from 'zod';
 import * as fs from 'fs';
 import * as path from 'path';
-import { globalToolRegistry } from './ToolRegistry.js';
-import { globalEventStore } from '../core/EventStore.js';
+import { globalToolRegistry } from './ToolRegistry.ts';
+import { globalEventStore } from '../core/EventStore.ts';
 
 const workspaceRoot = path.join(process.cwd(), 'workspace');
 const PROJECTS_FILE = path.join(workspaceRoot, 'projects.json');

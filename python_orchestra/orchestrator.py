@@ -139,7 +139,7 @@ class OrchestratorEngine:
             if task_type == "code_generation" and level < 3:
                  # Clean code output only pass
                  if "regex" in task.lower():
-                      output = "^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+                      output = r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
                       
         except Exception as e:
             status = "failed"

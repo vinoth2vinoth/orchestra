@@ -125,3 +125,33 @@ export class CircuitBreaker {
 }
 
 export const globalCircuitBreaker = new CircuitBreaker();
+
+export class CircuitBreakerRegistry {
+    private breakers = new Map<string, CircuitBreaker>();
+
+    public get(key: string) {
+        const normalizedKey = key || 'default';
+        let breaker = this.breakers.get(normalizedKey);
+        if (!breaker) {
+            breaker = new CircuitBreaker();
+            this.breakers.set(normalizedKey, breaker);
+        }
+        return breaker;
+    }
+
+    public async execute<T>(key: string, action: () => Promise<T>, fallback?: () => Promise<T>, timeoutMs?: number): Promise<T> {
+        return this.get(key).execute(action, fallback, timeoutMs);
+    }
+
+    public reset(key?: string) {
+        if (key) {
+            this.breakers.get(key)?.reset();
+            return;
+        }
+        for (const breaker of this.breakers.values()) {
+            breaker.reset();
+        }
+    }
+}
+
+export const globalCircuitBreakers = new CircuitBreakerRegistry();

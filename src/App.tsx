@@ -1,17 +1,19 @@
-import { useState, useRef, useEffect, ChangeEvent, useMemo } from 'react';
+import { useState, useRef, useEffect, ChangeEvent, useMemo, lazy, Suspense } from 'react';
 import { Settings, Play, Square, UserPlus, Trash2, Bot, CircleUserRound, Sparkles, ShieldAlert, Save, Upload, Download, AlertCircle, XCircle, Terminal, Database, History, Brain, Keyboard, Workflow, Activity, ZapOff, Folder, MessageSquare, Briefcase, Network } from 'lucide-react';
-import { TelemetryStudio } from './components/TelemetryStudio';
-import { AgentInspectorPane } from './components/AgentInspectorPane';
-import { ParadigmPlayground } from './components/ParadigmPlayground';
-import { CommandPalette, CommandAction } from './components/CommandPalette';
-import { ArchitectureOverview } from './components/ArchitectureOverview';
 import { Agent, ChatMessage, Edge } from './types';
 import { cn } from './lib/utils';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { motion, AnimatePresence } from 'motion/react';
-import { ProjectWorkspace } from './components/ProjectWorkspace';
-import { ProjectManager } from './components/ProjectManager';
+import type { CommandAction } from './components/CommandPalette';
+
+const TelemetryStudio = lazy(() => import('./components/TelemetryStudio').then(mod => ({ default: mod.TelemetryStudio })));
+const AgentInspectorPane = lazy(() => import('./components/AgentInspectorPane').then(mod => ({ default: mod.AgentInspectorPane })));
+const ParadigmPlayground = lazy(() => import('./components/ParadigmPlayground').then(mod => ({ default: mod.ParadigmPlayground })));
+const CommandPalette = lazy(() => import('./components/CommandPalette').then(mod => ({ default: mod.CommandPalette })));
+const ArchitectureOverview = lazy(() => import('./components/ArchitectureOverview').then(mod => ({ default: mod.ArchitectureOverview })));
+const ProjectWorkspace = lazy(() => import('./components/ProjectWorkspace').then(mod => ({ default: mod.ProjectWorkspace })));
+const ProjectManager = lazy(() => import('./components/ProjectManager').then(mod => ({ default: mod.ProjectManager })));
 
 const DEFAULT_AGENTS: Agent[] = [
   {
@@ -52,6 +54,12 @@ const DEFAULT_AGENTS: Agent[] = [
   }
 ];
 
+const sanitizeAgentsForStorage = (agentList: Agent[]) =>
+  agentList.map(agent => ({
+    ...agent,
+    apiKeyValue: ''
+  }));
+
 export default function App() {
   const [agents, setAgents] = useState<Agent[]>(DEFAULT_AGENTS);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -86,7 +94,7 @@ export default function App() {
     const savedAgents = localStorage.getItem('orchestra_agents_config');
     if (savedAgents) {
       try {
-        setAgents(JSON.parse(savedAgents));
+        setAgents(sanitizeAgentsForStorage(JSON.parse(savedAgents)));
       } catch (err) {
         console.error("Failed to load agents from localStorage", err);
       }
@@ -95,7 +103,7 @@ export default function App() {
 
   // Save to localStorage on change
   useEffect(() => {
-    localStorage.setItem('orchestra_agents_config', JSON.stringify(agents));
+    localStorage.setItem('orchestra_agents_config', JSON.stringify(sanitizeAgentsForStorage(agents)));
   }, [agents]);
 
   // Connect to SSE for Observability
@@ -509,6 +517,7 @@ CRITICAL CONTEXT:
   ];
 
   return (
+    <Suspense fallback={null}>
     <div className="flex h-screen w-full bg-slate-950 text-slate-200 overflow-hidden font-sans relative">
       <CommandPalette open={commandPaletteOpen} setOpen={setCommandPaletteOpen} actions={commandActions} />
       
@@ -1353,5 +1362,6 @@ CRITICAL CONTEXT:
         />
       )}
     </div>
+    </Suspense>
   );
 }

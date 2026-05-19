@@ -51,6 +51,10 @@ export class Sanitizer {
 
         // Universal entropy-based long string check (e.g. hex/base64 secrets)
         scrubbed = scrubbed.replace(/[a-zA-Z0-9/+]{32,}/g, (match) => {
+            if (/^[0-9a-f]{8}[0-9a-f]{4}[1-5][0-9a-f]{3}[89ab][0-9a-f]{3}[0-9a-f]{12}$/i.test(match)) {
+                return match;
+            }
+
             // Only redact if it looks like high-entropy data (random-ish)
             const hasNumbers = /[0-9]/.test(match);
             const hasSpecial = /[+/]/.test(match);

@@ -1,5 +1,6 @@
 import { MemoryEntry, MemoryTier, CoreMemoryState } from '../core/types.ts';
 import { globalEventStore } from '../core/EventStore.ts';
+import { StateAdapter, globalStateAdapter } from '../core/StateAdapter.ts';
 import natural from 'natural';
 
 const TfIdf = natural.TfIdf;
@@ -11,6 +12,13 @@ interface VectorMemoryEntry extends MemoryEntry {
     lastAccessed?: number;
 }
 
+export interface MemoryMeshOptions {
+    namespace?: string;
+    tenantId?: string;
+    persist?: boolean;
+    stateAdapter?: StateAdapter;
+}
+
 /**
  * MemoryMesh implements the 4-tier CoALA-inspired memory architecture (Dimension 07).
  * Now augmented with REAL Vector Search capabilities using TF-IDF (Free & local).
@@ -20,6 +28,11 @@ export class MemoryMesh {
     private tfidf = new TfIdf();
     private searchCache: Map<string, VectorMemoryEntry[]> = new Map();
     private coldMemories: VectorMemoryEntry[] = [];
+    private readonly maxMemoryEntries = Number(process.env.ORCHESTRA_MEMORY_MAX_ENTRIES || 5000);
+    private readonly namespace: string;
+    private readonly defaultTenantId?: string;
+    private readonly persistEnabled: boolean;
+    private readonly stateAdapter: StateAdapter;
     
     // GraphRAG Structures
     private graphEdges: Array<{ source: string, target: string, relation: string, weight: number, tenantId?: string }> = [];
@@ -27,6 +40,19 @@ export class MemoryMesh {
 
     // MemGPT-style Core Memory Integration
     private coreMemories: Map<string, CoreMemoryState> = new Map();
+
+    constructor(options: MemoryMeshOptions = {}) {
+        this.namespace = options.namespace || 'session';
+        this.defaultTenantId = options.tenantId;
+        this.persistEnabled = options.persist ?? process.env.ORCHESTRA_MEMORY_PERSISTENCE === 'true';
+        this.stateAdapter = options.stateAdapter || globalStateAdapter;
+
+        if (this.persistEnabled) {
+            setTimeout(() => {
+                this.loadPersistedMemories().catch(err => console.warn('[MemoryMesh] Failed to load persisted memories:', err.message));
+            }, 0);
+        }
+    }
 
     public getCoreMemory(contextId: string): CoreMemoryState {
         if (!this.coreMemories.has(contextId)) {
@@ -96,6 +122,7 @@ export class MemoryMesh {
 
     private async store(tier: MemoryTier, content: any, metadata: Record<string, any>, vectorize = false, tenantId?: string) {
         const now = Date.now();
+        const effectiveTenantId = tenantId || this.defaultTenantId;
         
         // Safety Guard: Limit size of individual memory entries
         let finalContent = content;
@@ -104,22 +131,30 @@ export class MemoryMesh {
             finalContent = content.substring(0, 20000) + '... [TRUNCATED]';
         }
 
-        this.memories.push({
+        const entry: VectorMemoryEntry = {
             id: crypto.randomUUID(),
             tier,
             content: finalContent,
             timestamp: now,
             metadata,
-            tenantId,
+            tenantId: effectiveTenantId,
             accessCount: 1,
             lastAccessed: now
-        });
+        };
+
+        this.memories.push(entry);
 
         if (vectorize && typeof finalContent === 'string') {
             this.tfidf.addDocument(finalContent);
         } else {
             // Add a placeholder to keep indices aligned
             this.tfidf.addDocument("");
+        }
+
+        this.pruneIfNeeded();
+
+        if (this.persistEnabled) {
+            await this.persistEntry(entry);
         }
     }
 
@@ -276,6 +311,40 @@ export class MemoryMesh {
                 this.tfidf.addDocument("");
             }
         }
+    }
+
+    private pruneIfNeeded() {
+        if (this.memories.length <= this.maxMemoryEntries) return;
+
+        const overflow = this.memories.length - this.maxMemoryEntries;
+        const removed = this.memories.splice(0, overflow);
+        this.coldMemories.push(...removed.filter(Boolean));
+        this.rebuildVectorIndex();
+    }
+
+    private persistenceKey() {
+        return `memory:${this.defaultTenantId || 'GLOBAL'}:${this.namespace}:entries`;
+    }
+
+    private async persistEntry(entry: VectorMemoryEntry) {
+        await this.stateAdapter.mutate<VectorMemoryEntry[]>(this.persistenceKey(), current => {
+            const entries = current || [];
+            const withoutDuplicate = entries.filter(item => item.id !== entry.id);
+            return [...withoutDuplicate, entry].slice(-this.maxMemoryEntries);
+        });
+    }
+
+    private async loadPersistedMemories() {
+        const entries = await this.stateAdapter.get<VectorMemoryEntry[]>(this.persistenceKey());
+        if (!entries || entries.length === 0) return;
+
+        const existingIds = new Set(this.memories.map(memory => memory.id));
+        for (const entry of entries) {
+            if (!existingIds.has(entry.id)) {
+                this.memories.push(entry);
+            }
+        }
+        this.rebuildVectorIndex();
     }
 
     /**

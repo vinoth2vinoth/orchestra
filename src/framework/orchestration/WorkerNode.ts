@@ -98,7 +98,7 @@ export class WorkerNode {
                     this.activeTaskId = null;
                 }
             }
-        });
+        }, this.nodeId);
     }
 
     public stop() {

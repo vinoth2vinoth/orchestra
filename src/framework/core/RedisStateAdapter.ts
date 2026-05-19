@@ -1,5 +1,5 @@
 import Redis from 'ioredis';
-import { StateAdapter } from './StateAdapter.ts';
+import type { StateAdapter } from './StateAdapter.ts';
 
 /**
  * Redis implementation of StateAdapter.
@@ -43,6 +43,53 @@ export class RedisStateAdapter implements StateAdapter {
 
     public async delete(key: string): Promise<void> {
         await this.client.del(key);
+    }
+
+    public async mutate<T>(key: string, updater: (current: T | null) => T | Promise<T>, ttlSeconds?: number): Promise<T> {
+        const lockKey = `mutate:${key}`;
+        const lockTtlMs = 5000;
+        const deadline = Date.now() + lockTtlMs;
+
+        while (!(await this.acquireLock(lockKey, lockTtlMs))) {
+            if (Date.now() > deadline) throw new Error(`Timed out acquiring mutation lock for ${key}`);
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+
+        try {
+            const current = await this.get<T>(key);
+            const next = await updater(current);
+            await this.set(key, next, ttlSeconds);
+            return next;
+        } finally {
+            await this.releaseLock(lockKey);
+        }
+    }
+
+    public async increment(key: string, delta: number = 1, ttlSeconds?: number): Promise<number> {
+        if (delta === 1 && !ttlSeconds) {
+            return await this.client.incr(key);
+        }
+        return this.mutate<number>(key, current => (current || 0) + delta, ttlSeconds);
+    }
+
+    public async compareAndSwap<T>(key: string, expected: T | null, next: T, ttlSeconds?: number): Promise<boolean> {
+        const lockKey = `cas:${key}`;
+        const lockTtlMs = 5000;
+        const deadline = Date.now() + lockTtlMs;
+
+        while (!(await this.acquireLock(lockKey, lockTtlMs))) {
+            if (Date.now() > deadline) throw new Error(`Timed out acquiring compare-and-swap lock for ${key}`);
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+
+        try {
+            const current = await this.get<T>(key);
+            if (JSON.stringify(current) !== JSON.stringify(expected)) return false;
+            await this.set(key, next, ttlSeconds);
+            return true;
+        } finally {
+            await this.releaseLock(lockKey);
+        }
     }
 
     public async pushToList(key: string, value: any): Promise<number> {

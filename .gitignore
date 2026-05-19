@@ -1,4 +1,6 @@
 node_modules/
+__pycache__/
+*.py[cod]
 build/
 dist/
 coverage/
@@ -6,3 +8,7 @@ coverage/
 *.log
 .env*
 !.env.example
+server_logs.txt
+server-test.*.log
+orchestra_workspace/.orchestra/checkpoints/
+orchestra_workspace/.orchestra/audit/*.jsonl

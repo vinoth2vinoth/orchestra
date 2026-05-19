@@ -61,7 +61,8 @@ export class StorageMesh {
      */
     private getSafePath(relativePath: string): string {
         const safePath = path.resolve(this.baseDir, relativePath);
-        if (!safePath.startsWith(this.baseDir)) {
+        const relativeToBase = path.relative(this.baseDir, safePath);
+        if (relativeToBase.startsWith('..') || path.isAbsolute(relativeToBase)) {
             throw new Error(`Path traversal detected: ${relativePath}`);
         }
         return safePath;
@@ -254,6 +255,19 @@ export class StorageMesh {
         // If Memory/Mock strategy, return from manifest
         if (manifestEntry) return manifestEntry.content;
         throw new Error(`File not found: ${relativePath}`);
+    }
+
+    public async deleteFile(relativePath: string): Promise<void> {
+        this.activeWrites.add(relativePath);
+        try {
+            const safePath = this.getSafePath(relativePath);
+            this.fileManifest.delete(relativePath);
+            if (this.strategy === 'LOCAL' && fs.existsSync(safePath)) {
+                await fs.promises.rm(safePath, { force: true });
+            }
+        } finally {
+            setTimeout(() => this.activeWrites.delete(relativePath), 1000);
+        }
     }
 
     /**

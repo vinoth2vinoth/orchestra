@@ -647,8 +647,22 @@ export class ProviderRegistry {
             text = `When attempting to execute a workflow, if the provider is under high load (SimMode), you should leverage the Recursive Logic Engine to maintain fidelity.`;
         } else if (lastMessage.includes('Reply with \'OK\' if sufficient')) {
             text = "OK. The response is professionally complete and accurate for the given task.";
+        } else if (lastMessage.includes('respond with exactly "PASS"') || lastMessage.includes("reply exactly \"PASS\"") || lastMessage.includes("reply 'PASS'")) {
+            text = "PASS";
         } else if (lastMessage.includes('Reply strictly with JSON')) {
             text = `{"needsSpecialist": false, "expertise": "None"}`;
+        } else if (/hello[- ]?world|static html|one-page/i.test(lastMessage)) {
+            text = `PROJECT_ARTIFACT: Static HTML page plan\n- index.html with semantic heading, accessible button, and minimal CSS.\n- Verification: open the page, click the button, and confirm visible feedback.\nGOAL_MET`;
+        } else if (/todo|rest api/i.test(lastMessage)) {
+            text = `PROJECT_ARTIFACT: Todo REST API design\n- Endpoints: POST /todos, GET /todos, PATCH /todos/:id/complete.\n- Validation: title required, status constrained, IDs checked.\n- Persistence: repository layer with migration-ready schema.\nGOAL_MET`;
+        } else if (/crud|inventory|authentication|database schema/i.test(lastMessage)) {
+            text = `PROJECT_ARTIFACT: Inventory CRUD app blueprint\n- Auth: session or JWT protected routes.\n- Database: items table with SKU, quantity, owner, timestamps.\n- API/UI: create, list, edit, delete, and validation states.\nGOAL_MET`;
+        } else if (/healthcare|phi|human approval|disaster recovery|regulated/i.test(lastMessage)) {
+            text = `PROJECT_ARTIFACT: Regulated healthcare AI platform plan\n- PHI isolation, approval gates, model evaluation registry, immutable audits, and DR runbooks.\n- Compliance controls: least privilege, retention policy, and incident response.\nGOAL_MET`;
+        } else if (/multi-tenant|saas|rbac|billing/i.test(lastMessage)) {
+            text = `PROJECT_ARTIFACT: Multi-tenant SaaS architecture\n- Tenant isolation, RBAC scopes, billing events, audit log append-only storage.\n- Observability: request tracing, tenant metrics, and alerting.\nGOAL_MET`;
+        } else if (/deployment plan|runbook|collaborative editor/i.test(lastMessage)) {
+            text = `PROJECT_ARTIFACT: Collaborative editor deployment plan\n- Environments, release gates, realtime service health checks, rollback, and on-call runbooks.\nGOAL_MET`;
         } else if (lastMessage.includes('GOAL_MET')) {
             text = `<thought>Simulation goal check.</thought><plan>1. Success</plan><critic>None</critic><action>Finalizing</action><verification>GOAL_MET</verification>`;
         } else {

@@ -17,11 +17,11 @@ _An advanced TypeScript framework for building, managing, and scaling autonomous
 
 </div>
 
-Welcome to **Orchestra**, the definitive enterprise-grade **Multi-Agent AI Framework**.
+Welcome to **Orchestra**, an early-stage **Multi-Agent AI Framework** focused on orchestration, governance, and distributed runtime experiments.
 
-Orchestra goes beyond basic chat-bot wrappers by implementing a robust, distributed architecture that features **self-healing worker pools**, **autonomous background daemons**, **state checkpointing**, and **enterprise-grade security governance**. It is engineered from the ground up to orchestrate dozens of intelligent micro-agents to cooperatively execute complex, multi-layered tasks across autonomous swarm environments.
+Orchestra goes beyond basic chat-bot wrappers by implementing a distributed-oriented architecture with **worker pools**, **autonomous background daemons**, **state checkpointing**, explicit tool modes, and security governance. The default local setup is designed for development and evaluation; production deployments should enable Redis-backed state, API auth, durable secrets, and the safety flags documented in `.env.example`.
 
-If you are looking to build responsive, robust, and infinitely scalable **Agentic AI systems**, you're in the right place.
+If you are looking to explore responsive, observable **Agentic AI systems**, you're in the right place.
 
 ---
 
@@ -47,9 +47,31 @@ We designed Orchestra to solve the most prevalent challenges in current open-sou
 ### 🛠️ Core Technology Stack
 
 - **Backend**: Node.js (TypeScript), OpenTelemetry (Tracing)
-- **Frontend Framework**: React 18, Vite
+- **Frontend Framework**: React 19, Vite
 - **Styling**: Tailwind CSS
 - **Data Validation**: Zod schemas for robust tool execution
+
+### Python Prototype Status
+
+The `python_orchestra/` directory is a standalone Python prototype for escalation,
+validation, and routing experiments. It is not connected to the TypeScript
+orchestrator, queue broker, memory mesh, or HTTP API. Multi-language worker
+interoperability remains roadmap work; production workflows should use the
+TypeScript runtime unless a bridge is explicitly added.
+
+### Production Readiness Notes
+
+The local defaults favor fast development. Before using Orchestra in a production
+or multi-tenant environment:
+
+- Set `ORCHESTRA_API_TOKEN`; do not rely on `ORCHESTRA_DEV_AUTH_BYPASS`.
+- Set `ORCHESTRA_ENCRYPTION_KEY`.
+- Use `ORCHESTRA_STATE_ADAPTER=redis` with `REDIS_URL` for durable queue/state.
+- Keep `ORCHESTRA_ENABLE_CODE_SANDBOX=false` unless code execution is isolated by
+  a separate container or process sandbox.
+- Keep tool modes explicit with `ORCHESTRA_TOOL_MODE` or per-tool mode variables.
+- Enable `ORCHESTRA_ENABLE_EXPERIMENTAL_PLUGINS=true` only when you accept
+  demo/stochastic plugin behavior.
 
 ---
 
@@ -299,7 +321,7 @@ ANTHROPIC_API_KEY="sk-ant-..."
 ```
 
 **5. Start the Application**
-Launch the production-ready dev server which handles both the React dashboard and the background Orchestrator.
+Launch the local development server, which handles both the React dashboard and the background Orchestrator.
 
 ```bash
 npm run dev

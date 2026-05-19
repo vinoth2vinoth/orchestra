@@ -2,6 +2,7 @@ import { BaseAgent } from '../../agents/BaseAgent.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
 import { globalCheckpointer } from '../Checkpointer.ts';
 import { WorkflowConfig } from '../Orchestrator.ts';
+import { ConfigurationError } from '../../core/ErrorHandler.ts';
 
 /**
  * MapReduce Paradigm: Planner splits task, workers execute subtasks, manager synthesizes.
@@ -9,10 +10,10 @@ import { WorkflowConfig } from '../Orchestrator.ts';
 export class MapReduceStrategy extends ParadigmStrategy {
     async run(task: any, agents: BaseAgent[], context: ParadigmContext, config?: WorkflowConfig) {
         const planner = agents.find(a => a.card.role === 'PLANNER');
-        if (!planner) throw new Error("MAP_REDUCE requires a PLANNER agent");
+        if (!planner) throw new ConfigurationError("MAP_REDUCE requires a PLANNER agent");
 
         const workers = agents.filter(a => a.card.role === 'WORKER');
-        if (workers.length === 0) throw new Error("MAP_REDUCE requires at least one WORKER agent");
+        if (workers.length === 0) throw new ConfigurationError("MAP_REDUCE requires at least one WORKER agent");
 
         // 1. Plan Phase
         const dag = await context.executeAgentTask(planner, task, context.threadId, context.blackboard);
@@ -38,12 +39,12 @@ export class MapReduceStrategy extends ParadigmStrategy {
                 if (readyTasks.length === 0) throw new Error("Deadlock detected in Planner DAG dependencies.");
 
                 const promises = readyTasks.map(async (st) => {
-                    const worker = workers[Math.floor(Math.random() * workers.length)];
+                    const worker = this.selectWorkerForSubtask(workers, st);
                     let stContext = '';
                     if (st.dependencies && st.dependencies.length > 0) {
                         stContext = '\nContext from dependencies:\n' + st.dependencies.map((dep: string) => `[${dep}]: ${JSON.stringify(taskResults.get(dep))}`).join('\n');
                     }
-                    const execTask = `${st.description}${stContext}`;
+                    const execTask = `Objective: ${task}\nSubtask: ${st.description}${stContext}`;
                     const result = await context.executeAgentTask(worker, execTask, context.threadId, context.blackboard);
                     return { id: st.id, result };
                 });
@@ -71,5 +72,23 @@ export class MapReduceStrategy extends ParadigmStrategy {
             mapResults: Object.fromEntries(taskResults),
             finalAnswer
         };
+    }
+
+    private selectWorkerForSubtask(workers: BaseAgent[], subtask: any): BaseAgent {
+        const required = Array.isArray(subtask.requiredCapabilities) ? subtask.requiredCapabilities : [];
+        if (required.length > 0) {
+            const capable = workers.find(worker => required.some((cap: string) => worker.card.capabilities.includes(cap)));
+            if (capable) return capable;
+        }
+
+        const description = `${subtask.description || ''}`.toLowerCase();
+        const keywordMatch = workers.find(worker =>
+            worker.card.capabilities.some(cap => description.includes(cap.toLowerCase().replace(/[_-]/g, ' ')))
+        );
+        if (keywordMatch) return keywordMatch;
+
+        const id = `${subtask.id || subtask.description || ''}`;
+        const hash = [...id].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+        return workers[hash % workers.length];
     }
 }

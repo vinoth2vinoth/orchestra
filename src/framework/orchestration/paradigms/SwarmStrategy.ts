@@ -32,9 +32,9 @@ export class SwarmStrategy extends ParadigmStrategy {
         if (manager) {
             const summaryTask = `Swarm agents produced the following results:\n${JSON.stringify(results, null, 2)}\n\nPlease synthesize them into a final answer for: ${task}`;
             const finalResult = await context.executeAgentTask(manager, summaryTask, context.threadId, context.blackboard);
-            return { rawSwarmResults: results, synthesized: finalResult };
+            return { status: 'Completed', rawSwarmResults: results, synthesized: finalResult };
         }
 
-        return { rawSwarmResults: results };
+        return { status: 'Completed', rawSwarmResults: results };
     }
 }

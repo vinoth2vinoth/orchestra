@@ -5,7 +5,7 @@ import { globalPluginRegistry } from '../core/PluginRegistry.ts';
 import { MemoryMesh } from '../memory/MemoryMesh.ts';
 import { LLMConfig, ProviderRegistry } from '../llm/ProviderRegistry.ts';
 import { LLMAdapter, LLMResponse } from '../llm/LLMAdapter.ts';
-import { CircuitBreaker, globalCircuitBreaker } from '../resilience/CircuitBreaker.ts';
+import { CircuitBreaker } from '../resilience/CircuitBreaker.ts';
 import { globalToolRegistry } from '../tools/ToolRegistry.ts';
 import { globalEscalationManager } from '../governance/EscalationManager.ts';
 import { WorkflowSuspendedError } from '../orchestration/WorkflowSuspendedError.ts';
@@ -186,6 +186,8 @@ FORMAT: End your response with the verification status.
 
             return result;
         }
+
+        throw new Error(`[${this.card.id}] executeWithReasoning exhausted ${maxRetries} retries without GOAL_MET.`);
     }
 
     private readonly MAX_CONTEXT_CHARS = 32000; // Estimated 8k tokens safe limit
@@ -348,9 +350,10 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                 }), async (args) => {
                     const scrubbedValue = Sanitizer.scrubSecrets(args.value);
                     const bbKey = `bb:${this.card.id}`;
-                    const currentBB = await globalStateAdapter.get<Record<string, any>>(bbKey) || {};
-                    currentBB[args.key] = scrubbedValue;
-                    await globalStateAdapter.set(bbKey, currentBB);
+                    await globalStateAdapter.mutate<Record<string, any>>(bbKey, currentBB => ({
+                        ...(currentBB || {}),
+                        [args.key]: scrubbedValue
+                    }));
                     return `Successfully wrote to local blackboard under key: ${args.key}`;
                 })
             } as any),
@@ -590,4 +593,3 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
      */
     abstract execute(task: any, threadId: string): Promise<any>;
 }
-

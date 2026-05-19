@@ -5,7 +5,7 @@ from typing import Tuple, List, Any
 from openai import OpenAI
 
 class DeepSeekClient:
-    \"\"\"Shared wrapper with simple retry logic and timeout handling for DeepSeek\"\"\"
+    """Shared wrapper with simple retry logic and timeout handling for DeepSeek"""
     def __init__(self):
         # The prompt instructed to use the openai Python SDK with base_url explicitly
         self.client = OpenAI(
@@ -39,7 +39,7 @@ class DeepSeekClient:
         if "employee_db_tool" in prompt.lower() and "executives" in prompt.lower():
             return json.dumps({"status": "insufficient_data", "reason": "Tool returned empty matching dataset"})
         if "regex pattern" in prompt.lower():
-            return "^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+            return r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
         if "flatten json" in prompt.lower() and "arrays into csv" in prompt.lower():
             return "name,address_level_4\nJon,Unit 5"
         if "create a multi-threaded python data scraper" in prompt.lower():

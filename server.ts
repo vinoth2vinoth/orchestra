@@ -36,21 +36,50 @@ import { ProviderRegistry } from './src/framework/llm/ProviderRegistry.js';
 import { GoogleGenAI } from '@google/genai';
 import { globalWorkerCluster } from './src/framework/orchestration/WorkerCluster.js';
 import { AutonomousDaemon } from './src/framework/orchestration/AutonomousDaemon.js';
+import { SimulationManager } from './src/framework/core/SimulationManager.js';
 
 // Bootstrap Enterprise Features (DLP, Token Budget, Semantic Cache, Audit, Metrics)
 registerEnterpriseFeatures();
 
 // Bootstrap Model Context Protocol connections
-MCPClient.discoverAndRegister('https://internal.enterprise.mcp.ai/v1');
+if (process.env.MCP_ENDPOINT) {
+  MCPClient.discoverAndRegister(process.env.MCP_ENDPOINT);
+}
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
 
   // Middleware to parse JSON
   app.use(express.json({ limit: '10mb' }));
 
+  const apiAuthMiddleware: express.RequestHandler = (req, res, next) => {
+    if (process.env.ORCHESTRA_DEV_AUTH_BYPASS === 'true') {
+      return next();
+    }
+
+    const configuredToken = process.env.ORCHESTRA_API_TOKEN;
+    if (!configuredToken) {
+      return res.status(503).json({ error: 'API authentication is not configured. Set ORCHESTRA_API_TOKEN or explicitly enable ORCHESTRA_DEV_AUTH_BYPASS=true for local development.' });
+    }
+
+    const authHeader = req.header('authorization') || '';
+    const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
+      ? authHeader.slice(7).trim()
+      : '';
+    const apiKey = req.header('x-orchestra-api-key') || '';
+
+    if (bearerToken !== configuredToken && apiKey !== configuredToken) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    next();
+  };
+
+  app.use('/api', apiAuthMiddleware);
+
   const globalMemory = new MemoryMesh();
+  const createWorkflowMemory = () => new MemoryMesh();
   
   // Initialize Distributed Workers
   globalWorkerCluster.init(3);
@@ -87,20 +116,20 @@ async function startServer() {
       try {
           const state = await globalStateStore.getState(approvalId);
           const agents: BaseAgent[] = [];
+          const workflowMemory = createWorkflowMemory();
           if (state && state.agentDefinitions) {
-             globalRegistry.clear();
              let managerNode = null;
              for (const def of state.agentDefinitions) {
                  let roleUpper = def.role.toUpperCase();
                  let ag: BaseAgent;
                  if (roleUpper.includes('MANAGER')) {
-                    ag = new ManagerAgent(def.name, def.systemInstruction, 'MANAGER', globalMemory, def.llmConfig, def.capabilities, undefined, def.priority, def.urgency);
+                    ag = new ManagerAgent(def.name, def.systemInstruction, 'MANAGER', workflowMemory, def.llmConfig, def.capabilities, undefined, def.priority, def.urgency);
                  } else if (roleUpper.includes('REVIEW') || roleUpper.includes('CRITIC')) {
-                    ag = new CriticAgent(def.name, def.systemInstruction, 'CRITIC', globalMemory, def.llmConfig, def.capabilities, undefined, def.priority, def.urgency);
+                    ag = new CriticAgent(def.name, def.systemInstruction, 'CRITIC', workflowMemory, def.llmConfig, def.capabilities, undefined, def.priority, def.urgency);
                  } else if (roleUpper.includes('PLAN')) {
-                    ag = new PlannerAgent(def.name, def.systemInstruction, 'PLANNER', globalMemory, def.llmConfig, def.capabilities, undefined, def.priority, def.urgency);
+                    ag = new PlannerAgent(def.name, def.systemInstruction, 'PLANNER', workflowMemory, def.llmConfig, def.capabilities, undefined, def.priority, def.urgency);
                  } else {
-                    ag = new WorkerAgent(def.name, def.systemInstruction, 'WORKER', globalMemory, def.llmConfig, def.capabilities, undefined, def.priority, def.urgency);
+                    ag = new WorkerAgent(def.name, def.systemInstruction, 'WORKER', workflowMemory, def.llmConfig, def.capabilities, undefined, def.priority, def.urgency);
                  }
                  agents.push(ag);
                  globalRegistry.register(ag);
@@ -168,7 +197,16 @@ async function startServer() {
   });
 
   // --- Workspace File Management APIs ---
-  const workspaceRoot = path.join(process.cwd(), 'workspace');
+  const workspaceRoot = path.resolve(process.cwd(), 'workspace');
+
+  const resolveWorkspacePath = (requestedPath: string) => {
+    const targetPath = path.resolve(workspaceRoot, requestedPath);
+    const relativePath = path.relative(workspaceRoot, targetPath);
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+      return null;
+    }
+    return targetPath;
+  };
   
   // Ensure workspace exists
   if (!fs.existsSync(workspaceRoot)) {
@@ -213,10 +251,10 @@ async function startServer() {
       const filePath = req.query.path as string;
       if (!filePath) return res.status(400).json({ error: 'path required' });
       
-      const absolutePath = path.join(workspaceRoot, filePath);
+      const absolutePath = resolveWorkspacePath(filePath);
       
       // Simple security check to prevent directory traversal
-      if (!absolutePath.startsWith(workspaceRoot)) {
+      if (!absolutePath) {
          return res.status(403).json({ error: 'Access denied' });
       }
       
@@ -237,9 +275,9 @@ async function startServer() {
       const { path: filePath, content } = req.body;
       if (!filePath) return res.status(400).json({ error: 'path required' });
       
-      const absolutePath = path.join(workspaceRoot, filePath);
+      const absolutePath = resolveWorkspacePath(filePath);
       
-      if (!absolutePath.startsWith(workspaceRoot)) {
+      if (!absolutePath) {
          return res.status(403).json({ error: 'Access denied' });
       }
       
@@ -262,9 +300,9 @@ async function startServer() {
       const { path: dirPath } = req.body;
       if (!dirPath) return res.status(400).json({ error: 'path required' });
       
-      const absolutePath = path.join(workspaceRoot, dirPath);
+      const absolutePath = resolveWorkspacePath(dirPath);
       
-      if (!absolutePath.startsWith(workspaceRoot)) {
+      if (!absolutePath) {
          return res.status(403).json({ error: 'Access denied' });
       }
       
@@ -284,9 +322,9 @@ async function startServer() {
       const filePath = req.query.path as string;
       if (!filePath) return res.status(400).json({ error: 'path required' });
       
-      const absolutePath = path.join(workspaceRoot, filePath);
+      const absolutePath = resolveWorkspacePath(filePath);
       
-      if (!absolutePath.startsWith(workspaceRoot) || absolutePath === workspaceRoot) {
+      if (!absolutePath || absolutePath === workspaceRoot) {
          return res.status(403).json({ error: 'Access denied' });
       }
       
@@ -341,12 +379,33 @@ async function startServer() {
   app.post('/api/chat', async (req, res) => {
     try {
       const { systemInstruction, prompt, agentDefinitions, paradigm: requestedParadigm, edges } = req.body;
+      const executionMode = req.body.executionMode || 'auto';
+      if (!['auto', 'local', 'distributed', 'simulation'].includes(executionMode)) {
+          return res.status(400).json({ error: 'executionMode must be one of: auto, local, distributed, simulation' });
+      }
+      let shouldSimulate = executionMode === 'simulation';
       
       // Instead of simple routing, the frontend now provides the transcript as prompt.
       // We will create the agents dynamically using the payload.
       const agents: BaseAgent[] = [];
       let managerNode: ManagerAgent | null = null;
+      const workflowMemory = createWorkflowMemory();
       
+      const isLocalBaseURL = (baseURL?: string) => {
+          if (!baseURL) return false;
+          return /^(http:\/\/)?(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?/i.test(baseURL.replace(/^https?:\/\//i, ''));
+      };
+
+      const isLikelyPlaceholderKey = (key?: string, baseURL?: string) => {
+          if (!key || !key.trim()) return true;
+          if (isLocalBaseURL(baseURL)) return false;
+          const normalized = key.trim().toLowerCase();
+          return ['ollama-local', 'changeme', 'your_api_key', 'your-api-key', 'test', 'demo'].includes(normalized)
+              || normalized.includes('placeholder')
+              || normalized.startsWith('your_')
+              || normalized.startsWith('your-');
+      };
+
       const getLLMConfig = (def: any): any => {
           // No brand lock! If the user provides an API key and a baseURL via def (frontend) or env, use it.
           // Fallback gracefully across whatever keys happen to be provided, prioritizing generic configs first.
@@ -382,12 +441,32 @@ async function startServer() {
               else if (provider === 'gemini' && process.env.GEMINI_API_KEY) primaryKey = process.env.GEMINI_API_KEY;
           }
           
+          const hasUsableCredential = !isLikelyPlaceholderKey(primaryKey, baseURL);
+
+          if (!hasUsableCredential && (executionMode === 'auto' || executionMode === 'simulation')) {
+              shouldSimulate = true;
+              logToFile(`No usable credential for ${provider}; switching request to simulation mode.`);
+              console.warn(`[server] No usable credential for ${provider}; switching request to simulation mode.`);
+              return {
+                  apiKey: 'SIMULATION_ONLY',
+                  temperature: def.temperature ?? 0.7,
+                  modelName: reqModel,
+                  disableSummarization: true
+              };
+          }
+
+          if (!hasUsableCredential) {
+              const err: any = new Error(`No usable API key configured for provider ${provider}. Provide a real key, configure a local baseURL, or set executionMode to "simulation".`);
+              err.statusCode = 400;
+              throw err;
+          }
+
           if (!primaryKey) {
               logToFile(`WARNING: No API key found for provider ${provider}.`);
               console.warn(`[server] WARNING: No API key found for provider ${provider}. This will likely fail.`);
           } else {
-              logToFile(`API key found for ${provider} (prefix: ${primaryKey.substring(0, 6)}...)`);
-              console.log(`[server] API key found for ${provider} (prefix: ${primaryKey.substring(0, 6)}...)`);
+              logToFile(`API key configured for ${provider}.`);
+              console.log(`[server] API key configured for ${provider}.`);
           }
           
           const config: any = { 
@@ -411,20 +490,22 @@ async function startServer() {
       };
 
         if (agentDefinitions && agentDefinitions.length > 0) {
-          globalRegistry.clear();
           for (const def of agentDefinitions) {
                  let roleUpper = def.role.toUpperCase();
                  let ag: BaseAgent;
                  const llmConfig = getLLMConfig(def);
                  
                  if (roleUpper.includes('MANAGER')) {
-                    ag = new ManagerAgent(def.name, def.systemInstruction, 'MANAGER', globalMemory, llmConfig, def.capabilities, undefined, def.priority, def.urgency, def.id);
+                    ag = new ManagerAgent(def.name, def.systemInstruction, 'MANAGER', workflowMemory, llmConfig, def.capabilities, undefined, def.priority, def.urgency, def.id);
                  } else if (roleUpper.includes('REVIEW') || roleUpper.includes('CRITIC')) {
-                    ag = new CriticAgent(def.name, def.systemInstruction, 'CRITIC', globalMemory, llmConfig, def.capabilities, undefined, def.priority, def.urgency, def.id);
+                    ag = new CriticAgent(def.name, def.systemInstruction, 'CRITIC', workflowMemory, llmConfig, def.capabilities, undefined, def.priority, def.urgency, def.id);
                  } else if (roleUpper.includes('PLAN')) {
-                    ag = new PlannerAgent(def.name, def.systemInstruction, 'PLANNER', globalMemory, llmConfig, def.capabilities, undefined, def.priority, def.urgency, def.id);
+                    ag = new PlannerAgent(def.name, def.systemInstruction, 'PLANNER', workflowMemory, llmConfig, def.capabilities, undefined, def.priority, def.urgency, def.id);
                  } else {
-                    ag = new WorkerAgent(def.name, def.systemInstruction, 'WORKER', globalMemory, llmConfig, def.capabilities, undefined, def.priority, def.urgency, def.id);
+                    ag = new WorkerAgent(def.name, def.systemInstruction, 'WORKER', workflowMemory, llmConfig, def.capabilities, undefined, def.priority, def.urgency, def.id);
+                 }
+                 if (def.id) {
+                     globalRegistry.unregister(def.id);
                  }
                  agents.push(ag);
                  globalRegistry.register(ag); // Make sure it's in the global registry!
@@ -436,6 +517,9 @@ async function startServer() {
       if (agents.length === 0) {
          // Fallback legacy behavior
          try {
+             if (executionMode === 'simulation' || (executionMode === 'auto' && !process.env.GEMINI_API_KEY && !process.env.DEEPSEEK_API_KEY)) {
+                 return res.json({ text: '[SIMULATED_LOGIC]: No agent definitions were supplied, so Orchestra returned a simulated legacy response. GOAL_MET' });
+             }
              const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
              const response = await ai.models.generateContent({
                  model: 'gemini-2.5-flash',
@@ -480,6 +564,7 @@ async function startServer() {
       if (!requestedParadigm) {
           if (hasPlanner) paradigm = 'MAP_REDUCE';
           else if (workerCount >= 3 && hasCritic) paradigm = 'CONSENSUS';
+          else if (workerCount >= 2 && !managerNode) paradigm = 'DECENTRALIZED_SWARM';
           else if (agents.length >= 4) paradigm = 'DEBATE';
           else if (managerNode) paradigm = 'HIERARCHICAL';
       }
@@ -492,8 +577,19 @@ async function startServer() {
               startTime: new Date().toISOString(),
               initialTask: prompt.substring(0, 500)
           },
-          useDistributedQueue: true
+          useDistributedQueue: executionMode === 'distributed'
       };
+
+      if (config.paradigm === 'GRAPH' && (!config.edges || config.edges.length === 0)) {
+          return res.status(400).json({ error: 'GRAPH paradigm requires at least one execution edge.' });
+      }
+
+      if (shouldSimulate) {
+          SimulationManager.enable();
+          config.useDistributedQueue = false;
+      } else {
+          SimulationManager.disable();
+      }
       
       const result = await orchestrator.executeWorkflow(prompt, config, threadId);
 
@@ -513,7 +609,7 @@ async function startServer() {
 
     } catch (error: any) {
       console.error('API Error:', error);
-      res.status(500).json({ error: error.message || 'Internal Server Error' });
+      res.status(error.statusCode || 500).json({ error: error.message || 'Internal Server Error' });
     }
   });
 

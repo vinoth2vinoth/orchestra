@@ -88,7 +88,7 @@ export class DataLossPreventionPlugin implements AgenticPlugin {
 
 ## 4. Built-in Enterprise Plugins
 
-The framework includes a suite of production-ready plugins in `plugins/EnterpriseFeatures.ts`:
+The framework includes a suite of core and experimental plugins in `plugins/EnterpriseFeatures.ts`. Demo or stochastic plugins are disabled by default and require `ORCHESTRA_ENABLE_EXPERIMENTAL_PLUGINS=true`:
 
 ### Security & Compliance
 - **`DataLossPreventionPlugin`**: Redacts PII (email, credit card, SSN) from agent inputs and outputs using regex patterns.

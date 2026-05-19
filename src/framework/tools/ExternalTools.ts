@@ -1,10 +1,70 @@
 import { z } from 'zod';
 import * as fs from 'fs';
 import * as path from 'path';
-import { globalToolRegistry } from './ToolRegistry.js';
-import { globalEventStore } from '../core/EventStore.js';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import { globalToolRegistry } from './ToolRegistry.ts';
+import { globalEventStore } from '../core/EventStore.ts';
 
-const workspaceRoot = path.join(process.cwd(), 'workspace');
+const workspaceRoot = path.resolve(process.cwd(), 'workspace');
+const execAsync = promisify(exec);
+
+type ToolMode = 'mock' | 'live' | 'disabled';
+
+const getToolMode = (toolName: string): ToolMode => {
+    const specific = process.env[`ORCHESTRA_TOOL_${toolName.toUpperCase()}_MODE`];
+    const globalMode = process.env.ORCHESTRA_TOOL_MODE;
+    const mode = (specific || globalMode || 'mock').toLowerCase();
+    if (mode === 'live' || mode === 'disabled' || mode === 'mock') return mode;
+    throw new Error(`Invalid tool mode "${mode}" for ${toolName}. Use mock, live, or disabled.`);
+};
+
+const ensureToolEnabled = (toolName: string): ToolMode => {
+    const mode = getToolMode(toolName);
+    if (mode === 'disabled') {
+        throw new Error(`Tool ${toolName} is disabled by ORCHESTRA_TOOL_${toolName.toUpperCase()}_MODE/ORCHESTRA_TOOL_MODE.`);
+    }
+    return mode;
+};
+
+const assertExternalUrlAllowed = (rawUrl: string) => {
+    const parsed = new URL(rawUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    const isBlockedHost = hostname === 'localhost'
+        || hostname === '127.0.0.1'
+        || hostname === '0.0.0.0'
+        || hostname === '::1'
+        || hostname.startsWith('10.')
+        || hostname.startsWith('192.168.')
+        || /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname)
+        || hostname === '169.254.169.254';
+
+    if (isBlockedHost) {
+        throw new Error('Sandbox Security Violation: Access to internal/locally-hosted services is prohibited.');
+    }
+};
+
+const fetchTextWithTimeout = async (url: string, init: RequestInit = {}, timeoutMs = 10000) => {
+    assertExternalUrlAllowed(url);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, { ...init, signal: controller.signal });
+        const text = await response.text();
+        return { status: response.status, statusText: response.statusText, text: text.slice(0, 20000) };
+    } finally {
+        clearTimeout(timer);
+    }
+};
+
+const safeResolveWorkspacePath = (userPath: string): string | null => {
+    const targetPath = path.resolve(workspaceRoot, userPath);
+    const relativePath = path.relative(workspaceRoot, targetPath);
+    if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        return null;
+    }
+    return targetPath;
+};
 
 // 1. Web Search Tool
 globalToolRegistry.register(
@@ -15,16 +75,20 @@ globalToolRegistry.register(
         numResults: z.number().optional().describe('Number of results to return (default 3)')
     }),
     async ({ query, numResults = 3 }) => {
+        const mode = ensureToolEnabled('webSearch');
         globalEventStore.append({
             type: 'TOOL_CALL_REQUESTED',
             sourceAgentId: 'SYSTEM',
             threadId: 'GLOBAL',
             payload: { tool: 'webSearch', query }
         });
-        
+        if (mode === 'live') {
+            throw new Error('webSearch live mode requires a configured search provider. Set this tool to mock mode or add a search provider integration.');
+        }
+
         return JSON.stringify([
-            { title: `Result for ${query}`, url: 'https://example.com/1', snippet: `Mock snippet containing latest info on ${query}.` },
-            { title: `Documentation: ${query}`, url: 'https://example.com/2', snippet: 'Official documentation and guides.' }
+            { title: `Mock result for ${query}`, url: 'https://example.com/1', snippet: `Mock snippet for ${query}. Configure live mode with a search provider before treating this as real-time data.` },
+            { title: `Mock documentation: ${query}`, url: 'https://example.com/2', snippet: 'Mock documentation result.' }
         ].slice(0, numResults));
     }
 );
@@ -37,13 +101,19 @@ globalToolRegistry.register(
         url: z.string().url().describe('The absolute URL to fetch.')
     }),
     async ({ url }) => {
+        const mode = ensureToolEnabled('fetchUrl');
         globalEventStore.append({
             type: 'TOOL_CALL_REQUESTED',
             sourceAgentId: 'SYSTEM',
             threadId: 'GLOBAL',
             payload: { tool: 'fetchUrl', url }
         });
-        return `[Content of ${url}]: This is the simulated extracted markdown or text content from the requested webpage.`;
+        if (mode === 'live') {
+            const result = await fetchTextWithTimeout(url);
+            return `[HTTP ${result.status} ${result.statusText}]\n${result.text}`;
+        }
+
+        return `[MOCK Content of ${url}]: Simulated extracted markdown/text. Set ORCHESTRA_TOOL_FETCHURL_MODE=live to fetch the real URL.`;
     }
 );
 
@@ -52,7 +122,7 @@ import * as vm from 'node:vm';
 
 globalToolRegistry.register(
     'executeCodeSandbox',
-    'Execute Javascript code in a secure sandboxed environment.',
+    'Execute Javascript code only when ORCHESTRA_ENABLE_CODE_SANDBOX=true. This is not a production isolation boundary.',
     z.object({
         language: z.enum(['javascript']).describe('Programming language (currently restricts to javascript)'),
         code: z.string().describe('The code to execute')
@@ -64,6 +134,10 @@ globalToolRegistry.register(
             threadId: 'GLOBAL',
             payload: { tool: 'executeCodeSandbox', language }
         });
+
+        if (process.env.ORCHESTRA_ENABLE_CODE_SANDBOX !== 'true') {
+            throw new Error('Code sandbox execution is disabled by default. Set ORCHESTRA_ENABLE_CODE_SANDBOX=true only in an isolated environment.');
+        }
         
         if (code.includes('rm -rf') || code.includes('process.exit')) {
              throw new Error('Sandbox Security Violation: Malicious code pattern detected.');
@@ -110,8 +184,8 @@ globalToolRegistry.register(
     async ({ filePath }) => {
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'fileSystemRead', filePath } });
         
-        const absolutePath = path.join(workspaceRoot, filePath);
-        if (!absolutePath.startsWith(workspaceRoot)) {
+        const absolutePath = safeResolveWorkspacePath(filePath);
+        if (!absolutePath) {
             return `[File System Error]: Access denied to ${filePath}. Path must be within workspace.`;
         }
         
@@ -135,8 +209,8 @@ globalToolRegistry.register(
     async ({ filePath, content }) => {
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'fileSystemWrite', filePath, length: content.length } });
         
-        const absolutePath = path.join(workspaceRoot, filePath);
-        if (!absolutePath.startsWith(workspaceRoot)) {
+        const absolutePath = safeResolveWorkspacePath(filePath);
+        if (!absolutePath) {
             return `[File System Error]: Access denied to ${filePath}. Path must be within workspace.`;
         }
         
@@ -159,6 +233,7 @@ globalToolRegistry.register(
         command: z.string().describe('The shell command to run (e.g. "ls -la", "npm install")')
     }),
     async ({ command }) => {
+        const mode = ensureToolEnabled('executeShellCommand');
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'executeShellCommand', command } });
         
         const blacklist = ['rm ', 'mv ', 'chmod', 'chown', 'kill', 'pkill', 'format', ':(){ :|:& };:'];
@@ -166,7 +241,15 @@ globalToolRegistry.register(
             throw new Error(`Sandbox Security Violation: Command "${command}" contains potentially destructive operations.`);
         }
 
-        return `[Simulated Shell Output]: Executed "${command}" successfully (checked against safety blacklist).\ntotal 42\ndrwxr-xr-x 2 user group 4096 .`;
+        if (mode === 'live') {
+            if (process.env.ORCHESTRA_ENABLE_SHELL_TOOL !== 'true') {
+                throw new Error('executeShellCommand live mode requires ORCHESTRA_ENABLE_SHELL_TOOL=true.');
+            }
+            const { stdout, stderr } = await execAsync(command, { cwd: workspaceRoot, timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+            return `[Shell Output]\n${stdout}\n${stderr ? `[stderr]\n${stderr}` : ''}`.trim();
+        }
+
+        return `[MOCK Shell Output]: "${command}" passed safety checks. Set ORCHESTRA_TOOL_EXECUTESHELLCOMMAND_MODE=live and ORCHESTRA_ENABLE_SHELL_TOOL=true to execute for real.`;
     }
 );
 
@@ -180,15 +263,18 @@ globalToolRegistry.register(
         headers: z.record(z.string(), z.string()).optional(),
         body: z.string().optional()
     }),
-    async ({ method, url }) => {
+    async ({ method, url, headers, body }) => {
+        const mode = ensureToolEnabled('httpRequest');
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'httpRequest', method, url } });
         
-        // Basic SSRF protection simulation
-        if (url.includes('169.254.169.254') || url.includes('localhost') || url.includes('127.0.0.1')) {
-             throw new Error('Sandbox Security Violation: Access to internal/locally-hosted services is prohibited.');
+        assertExternalUrlAllowed(url);
+
+        if (mode === 'live') {
+            const result = await fetchTextWithTimeout(url, { method, headers, body });
+            return `[HTTP ${method} ${result.status} ${result.statusText}]\n${result.text}`;
         }
 
-        return `[HTTP ${method} 200 OK]: Simulated successful API response from ${url}`;
+        return `[MOCK HTTP ${method} 200 OK]: Simulated response from ${url}. Set ORCHESTRA_TOOL_HTTPREQUEST_MODE=live for a real request.`;
     }
 );
 
@@ -200,13 +286,18 @@ globalToolRegistry.register(
         query: z.string().describe('The query string to execute')
     }),
     async ({ query }) => {
+        const mode = ensureToolEnabled('databaseQuery');
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'databaseQuery', query } });
         
         if (query.toLowerCase().includes('drop table') || query.toLowerCase().includes('truncate')) {
              throw new Error('Sandbox Security Violation: Destructive database operations are prohibited via this agentic interface.');
         }
 
-        return `[Database Result]: 3 rows updated/returned successfully (Query sanitized).`;
+        if (mode === 'live') {
+            throw new Error('databaseQuery live mode requires a database adapter. Keep this tool in mock mode until a DB connector is configured.');
+        }
+
+        return `[MOCK Database Result]: 3 rows returned successfully (query sanitized).`;
     }
 );
 
@@ -219,8 +310,13 @@ globalToolRegistry.register(
         namespace: z.string().optional().describe('Optional namespace like "codebase", "company-docs", etc.')
     }),
     async ({ contextQuery, namespace }) => {
+        const mode = ensureToolEnabled('ragSearch');
         globalEventStore.append({ type: 'TOOL_CALL_REQUESTED', sourceAgentId: 'SYSTEM', threadId: 'GLOBAL', payload: { tool: 'ragSearch', contextQuery } });
         
+        if (mode === 'live') {
+            throw new Error('ragSearch live mode requires a vector database or MemoryMesh-backed retrieval adapter.');
+        }
+
         // M5 Remediation: Higher semantic threshold simulation
         const similarityScore = Math.random(); // In reality, this would be from a vector DB
         if (similarityScore < 0.75) {
@@ -230,4 +326,3 @@ globalToolRegistry.register(
         return `[RAG Result in ${namespace || 'default'}]: Found relevant snippets matching "${contextQuery}" (Similarity: ${similarityScore.toFixed(2)}). Use this context to answer the user.`;
     }
 );
-

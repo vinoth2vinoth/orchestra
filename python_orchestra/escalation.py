@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any, Tuple
 
 class DeescalationLogger:
-    \"\"\"Logs downgrades when tasks complete in first loop with zero flags.\"\"\"
+    """Logs downgrades when tasks complete in first loop with zero flags."""
     def __init__(self):
         self.logger = logging.getLogger("DeescalationLogger")
 
@@ -12,7 +12,7 @@ class DeescalationLogger:
             self.logger.info(f"Task {task_id} de-escalated from Level {assigned_level} to Level {actual_level}.")
 
 class EscalationEngine:
-    \"\"\"Calculates escalation level based on metrics vector.\"\"\"
+    """Calculates escalation level based on metrics vector."""
     
     def __init__(self):
         pass
@@ -42,11 +42,11 @@ class EscalationEngine:
         return 5
 
     def compute_level(self, task_metrics: Dict[str, Any]) -> int:
-        \"\"\"
+        """
         Calculate overall escalation level based on:
         (volume_score + determinism_score + tool_depth_score) / 3 
         Then apply ceiling.
-        \"\"\"
+        """
         expected_tokens = task_metrics.get("expected_tokens", 0)
         determinism = task_metrics.get("determinism", "moderate")
         tool_depth = task_metrics.get("tool_chain_depth", 0)
@@ -59,15 +59,15 @@ class EscalationEngine:
         return math.ceil(avg)
 
 class ReclassificationGate:
-    \"\"\"Validates escalation beyond Level 1.\"\"\"
+    """Validates escalation beyond Level 1."""
     
     def __init__(self):
         self.logger = logging.getLogger("ReclassificationGate")
 
     def should_escalate(self, current_level: int, task_metrics: Dict[str, Any]) -> Tuple[bool, str]:
-        \"\"\"
+        """
         Before escalating Level 1 to Level 2+, verify output volume and determinism genuinely require it.
-        \"\"\"
+        """
         if current_level > 1:
             return True, "Already > Level 1"
         
