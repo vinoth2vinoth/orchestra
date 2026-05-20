@@ -95,114 +95,119 @@ async function runCase(testCase: CaseDef) {
 
 async function main() {
   SimulationManager.enable();
-  globalWorkerCluster.init(3);
+  let exitCode = 0;
+  try {
+    globalWorkerCluster.init(3);
+    const cases: CaseDef[] = [];
 
-  const cases: CaseDef[] = [];
+    {
+      const memory = new MemoryMesh();
+      cases.push({
+        name: '01 easy static page',
+        paradigm: 'HIERARCHICAL',
+        task: 'Build a static hello-world page with a button and concise implementation notes.',
+        agents: [
+          makeAgent('manager', 'm1', 'Manager', 'Coordinate the implementation.', memory),
+          makeAgent('worker', 'w1', 'Developer', 'Create the page and implementation notes.', memory),
+        ],
+        expectedKeywords: ['static html', 'button'],
+      });
+    }
 
-  {
-    const memory = new MemoryMesh();
-    cases.push({
-      name: '01 easy static page',
-      paradigm: 'HIERARCHICAL',
-      task: 'Build a static hello-world page with a button and concise implementation notes.',
-      agents: [
-        makeAgent('manager', 'm1', 'Manager', 'Coordinate the implementation.', memory),
-        makeAgent('worker', 'w1', 'Developer', 'Create the page and implementation notes.', memory),
-      ],
-      expectedKeywords: ['static html', 'button'],
-    });
+    {
+      const memory = new MemoryMesh();
+      cases.push({
+        name: '02 small REST API',
+        paradigm: 'MAP_REDUCE',
+        task: 'Design a todo REST API with validation and persistence.',
+        agents: [
+          makeAgent('planner', 'p2', 'Planner', 'Split the API work into parallel subtasks.', memory),
+          makeAgent('worker', 'w2a', 'API Designer', 'Design endpoints and validation.', memory),
+          makeAgent('worker', 'w2b', 'Storage Designer', 'Design persistence.', memory),
+        ],
+        expectedKeywords: ['todo rest api', 'validation', 'persistence'],
+      });
+    }
+
+    {
+      const memory = new MemoryMesh();
+      cases.push({
+        name: '03 graph CRUD app',
+        paradigm: 'GRAPH',
+        task: 'Create a CRUD inventory app with auth, schema, API, and UI screens.',
+        agents: [
+          makeAgent('manager', 'm3', 'Manager', 'Coordinate graph flow.', memory),
+          makeAgent('worker', 'fe3', 'Frontend', 'Design UI screens.', memory),
+          makeAgent('worker', 'be3', 'Backend', 'Design API and database.', memory),
+          makeAgent('critic', 'r3', 'Reviewer', 'Review the final output.', memory),
+        ],
+        edges: [
+          { from: 'm3', to: 'fe3' },
+          { from: 'm3', to: 'be3' },
+          { from: 'fe3', to: 'r3' },
+          { from: 'be3', to: 'r3' },
+        ],
+        expectedKeywords: ['inventory', 'auth', 'database'],
+      });
+    }
+
+    {
+      const memory = new MemoryMesh();
+      cases.push({
+        name: '04 consensus SaaS architecture',
+        paradigm: 'CONSENSUS',
+        task: 'Architect a multi-tenant SaaS analytics dashboard with RBAC, billing, and audit logs.',
+        agents: [
+          makeAgent('worker', 'a4', 'Architect A', 'Propose one architecture.', memory),
+          makeAgent('worker', 'b4', 'Architect B', 'Propose one architecture.', memory),
+          makeAgent('worker', 'c4', 'Architect C', 'Propose one architecture.', memory),
+          makeAgent('critic', 'j4', 'Judge', 'Adjudicate the best final architecture.', memory),
+        ],
+        expectedKeywords: ['multi-tenant', 'rbac', 'audit'],
+      });
+    }
+
+    {
+      const memory = new MemoryMesh();
+      cases.push({
+        name: '05 debate healthcare platform',
+        paradigm: 'DEBATE',
+        task: 'Plan a regulated healthcare AI platform with PHI isolation, human approval, audits, evaluation, and DR.',
+        agents: [
+          makeAgent('worker', 'sec5', 'Security', 'Argue from security and compliance.', memory),
+          makeAgent('worker', 'arch5', 'Architecture', 'Argue from architecture.', memory),
+          makeAgent('worker', 'ops5', 'Operations', 'Argue from operations.', memory),
+          makeAgent('critic', 'judge5', 'Judge', 'Judge the debate.', memory),
+        ],
+        maxIterations: 2,
+        expectedKeywords: ['healthcare', 'phi', 'audit'],
+      });
+    }
+
+    {
+      const memory = new MemoryMesh();
+      cases.push({
+        name: '06 distributed hierarchical project',
+        paradigm: 'HIERARCHICAL',
+        task: 'Create a deployment plan for a collaborative editor with operational runbooks.',
+        agents: [
+          makeAgent('manager', 'm6', 'Manager', 'Coordinate distributed execution.', memory),
+          makeAgent('worker', 'w6a', 'Developer', 'Create implementation plan.', memory),
+          makeAgent('critic', 'r6', 'Reviewer', 'Review the plan.', memory),
+        ],
+        useDistributedQueue: true,
+        expectedKeywords: ['deployment', 'runbook'],
+      });
+    }
+
+    const results = [];
+    for (const testCase of cases) results.push(await runCase(testCase));
+    console.log(JSON.stringify(results, null, 2));
+    exitCode = results.some(result => !result.ok) ? 1 : 0;
+  } finally {
+    globalWorkerCluster.stop();
   }
-
-  {
-    const memory = new MemoryMesh();
-    cases.push({
-      name: '02 small REST API',
-      paradigm: 'MAP_REDUCE',
-      task: 'Design a todo REST API with validation and persistence.',
-      agents: [
-        makeAgent('planner', 'p2', 'Planner', 'Split the API work into parallel subtasks.', memory),
-        makeAgent('worker', 'w2a', 'API Designer', 'Design endpoints and validation.', memory),
-        makeAgent('worker', 'w2b', 'Storage Designer', 'Design persistence.', memory),
-      ],
-      expectedKeywords: ['todo rest api', 'validation', 'persistence'],
-    });
-  }
-
-  {
-    const memory = new MemoryMesh();
-    cases.push({
-      name: '03 graph CRUD app',
-      paradigm: 'GRAPH',
-      task: 'Create a CRUD inventory app with auth, schema, API, and UI screens.',
-      agents: [
-        makeAgent('manager', 'm3', 'Manager', 'Coordinate graph flow.', memory),
-        makeAgent('worker', 'fe3', 'Frontend', 'Design UI screens.', memory),
-        makeAgent('worker', 'be3', 'Backend', 'Design API and database.', memory),
-        makeAgent('critic', 'r3', 'Reviewer', 'Review the final output.', memory),
-      ],
-      edges: [
-        { from: 'm3', to: 'fe3' },
-        { from: 'm3', to: 'be3' },
-        { from: 'fe3', to: 'r3' },
-        { from: 'be3', to: 'r3' },
-      ],
-      expectedKeywords: ['inventory', 'auth', 'database'],
-    });
-  }
-
-  {
-    const memory = new MemoryMesh();
-    cases.push({
-      name: '04 consensus SaaS architecture',
-      paradigm: 'CONSENSUS',
-      task: 'Architect a multi-tenant SaaS analytics dashboard with RBAC, billing, and audit logs.',
-      agents: [
-        makeAgent('worker', 'a4', 'Architect A', 'Propose one architecture.', memory),
-        makeAgent('worker', 'b4', 'Architect B', 'Propose one architecture.', memory),
-        makeAgent('worker', 'c4', 'Architect C', 'Propose one architecture.', memory),
-        makeAgent('critic', 'j4', 'Judge', 'Adjudicate the best final architecture.', memory),
-      ],
-      expectedKeywords: ['multi-tenant', 'rbac', 'audit'],
-    });
-  }
-
-  {
-    const memory = new MemoryMesh();
-    cases.push({
-      name: '05 debate healthcare platform',
-      paradigm: 'DEBATE',
-      task: 'Plan a regulated healthcare AI platform with PHI isolation, human approval, audits, evaluation, and DR.',
-      agents: [
-        makeAgent('worker', 'sec5', 'Security', 'Argue from security and compliance.', memory),
-        makeAgent('worker', 'arch5', 'Architecture', 'Argue from architecture.', memory),
-        makeAgent('worker', 'ops5', 'Operations', 'Argue from operations.', memory),
-        makeAgent('critic', 'judge5', 'Judge', 'Judge the debate.', memory),
-      ],
-      maxIterations: 2,
-      expectedKeywords: ['healthcare', 'phi', 'audit'],
-    });
-  }
-
-  {
-    const memory = new MemoryMesh();
-    cases.push({
-      name: '06 distributed hierarchical project',
-      paradigm: 'HIERARCHICAL',
-      task: 'Create a deployment plan for a collaborative editor with operational runbooks.',
-      agents: [
-        makeAgent('manager', 'm6', 'Manager', 'Coordinate distributed execution.', memory),
-        makeAgent('worker', 'w6a', 'Developer', 'Create implementation plan.', memory),
-        makeAgent('critic', 'r6', 'Reviewer', 'Review the plan.', memory),
-      ],
-      useDistributedQueue: true,
-      expectedKeywords: ['deployment', 'runbook'],
-    });
-  }
-
-  const results = [];
-  for (const testCase of cases) results.push(await runCase(testCase));
-  console.log(JSON.stringify(results, null, 2));
-  process.exit(results.some(result => !result.ok) ? 1 : 0);
+  process.exit(exitCode);
 }
 
 main().catch(error => {
