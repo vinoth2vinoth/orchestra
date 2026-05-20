@@ -136,6 +136,22 @@ export class Orchestrator {
     }
 
     public async executeWorkflow(task: any, config: WorkflowConfig, threadId: string): Promise<any> {
+        const configRuntimeNeedsScopedRegistry = Boolean(
+            config.runtime?.tenantId ||
+            config.runtime?.stateAdapter ||
+            config.runtime?.pluginRegistry ||
+            config.runtime?.circuitBreakers ||
+            config.runtime?.queueBroker ||
+            config.runtime?.workerPool ||
+            config.runtime?.policyEngine ||
+            config.runtime?.auditLog ||
+            config.runtime?.eventStore ||
+            config.runtime?.checkpointer ||
+            config.runtime?.stateStore ||
+            config.runtime?.toolRegistry ||
+            config.runtime?.escalationManager ||
+            config.runtime?.genealogy
+        );
         const workflowRuntime = config.runtime ? createRuntimeContext({
             tenantId: config.runtime.tenantId || this.runtime.tenantId,
             stateAdapter: config.runtime.stateAdapter || this.runtime.stateAdapter,
@@ -145,7 +161,7 @@ export class Orchestrator {
             workerPool: config.runtime.workerPool || this.runtime.workerPool,
             policyEngine: config.runtime.policyEngine || this.runtime.policyEngine,
             auditLog: config.runtime.auditLog || this.runtime.auditLog,
-            agentRegistry: config.runtime.agentRegistry || ((config.runtime.eventStore || config.runtime.toolRegistry) ? undefined : this.runtime.agentRegistry),
+            agentRegistry: config.runtime.agentRegistry || (configRuntimeNeedsScopedRegistry ? undefined : this.runtime.agentRegistry),
             eventStore: config.runtime.eventStore || this.runtime.eventStore,
             checkpointer: config.runtime.checkpointer || this.runtime.checkpointer,
             stateStore: config.runtime.stateStore || this.runtime.stateStore,

@@ -39,6 +39,22 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
     const eventStore = options.eventStore || globalEventStore;
     const toolRegistry = options.toolRegistry || globalToolRegistry;
     const auditLog = options.auditLog || globalAuditLog;
+    const needsScopedRegistry = Boolean(
+        options.tenantId ||
+        options.stateAdapter ||
+        options.pluginRegistry ||
+        options.circuitBreakers ||
+        options.queueBroker ||
+        options.workerPool ||
+        options.policyEngine ||
+        options.auditLog ||
+        options.eventStore ||
+        options.checkpointer ||
+        options.stateStore ||
+        options.toolRegistry ||
+        options.escalationManager ||
+        options.genealogy
+    );
     const escalationManager = options.escalationManager || (
         options.eventStore || options.auditLog
             ? new EscalationManager(eventStore, auditLog)
@@ -48,7 +64,7 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         options.eventStore ? new GenealogyTracker(eventStore) : globalGenealogy
     );
     const agentRegistry = options.agentRegistry || (
-        options.eventStore || options.toolRegistry
+        needsScopedRegistry
             ? new AgentRegistry({ eventStore, toolRegistry })
             : globalRegistry
     );

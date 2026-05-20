@@ -258,6 +258,58 @@ async function testRuntimePluginAndTenantScope() {
   }
 }
 
+async function testTenantOnlyRuntimeGetsScopedAgentRegistry() {
+  const tenantAAgent = new EchoManagerAgent(
+    'TenantOnlyA',
+    'Echoes tenant A.',
+    'MANAGER',
+    new MemoryMesh(),
+    { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+    [],
+    undefined,
+    undefined,
+    undefined,
+    'tenant-only-agent'
+  );
+  const tenantBAgent = new EchoManagerAgent(
+    'TenantOnlyB',
+    'Echoes tenant B.',
+    'MANAGER',
+    new MemoryMesh(),
+    { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+    [],
+    undefined,
+    undefined,
+    undefined,
+    'tenant-only-agent'
+  );
+
+  const configA: WorkflowConfig = {
+    paradigm: 'HIERARCHICAL',
+    agents: [tenantAAgent],
+    maxRetries: 0,
+    runtime: { tenantId: 'tenant-only-a' }
+  };
+  const configB: WorkflowConfig = {
+    paradigm: 'HIERARCHICAL',
+    agents: [tenantBAgent],
+    maxRetries: 0,
+    runtime: { tenantId: 'tenant-only-b' }
+  };
+
+  const [resultA, resultB] = await Promise.all([
+    new Orchestrator().executeWorkflow('tenant-a-task', configA, `TENANT_ONLY_A_${Date.now()}`),
+    new Orchestrator().executeWorkflow('tenant-b-task', configB, `TENANT_ONLY_B_${Date.now()}`)
+  ]);
+
+  if (resultA.tenantId !== 'tenant-only-a') {
+    throw new Error(`Tenant-only workflow A used wrong runtime: ${JSON.stringify(resultA)}`);
+  }
+  if (resultB.tenantId !== 'tenant-only-b') {
+    throw new Error(`Tenant-only workflow B used wrong runtime: ${JSON.stringify(resultB)}`);
+  }
+}
+
 async function testRuntimeCheckpointerScope() {
   const threadId = `RUNTIME_CHECKPOINT_SHARED_${Date.now()}`;
   const scopedCheckpointerA = new InMemoryCheckpointer();
@@ -416,6 +468,7 @@ const tests = [
   ['workflow injects runtime into agents', testWorkflowInjectsRuntimeIntoAgents],
   ['manager uses scoped agent registry for tool grant', testManagerUsesScopedAgentRegistryForToolGrant],
   ['runtime plugin and tenant scope', testRuntimePluginAndTenantScope],
+  ['tenant-only runtime gets scoped agent registry', testTenantOnlyRuntimeGetsScopedAgentRegistry],
   ['runtime checkpointer scope', testRuntimeCheckpointerScope],
   ['runtime state store scope for suspended workflow', testRuntimeStateStoreScopeForSuspendedWorkflow],
   ['concurrent workflows do not mutate shared task object', testConcurrentWorkflowsDoNotMutateSharedTaskObject]

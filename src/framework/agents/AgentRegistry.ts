@@ -1,4 +1,4 @@
-import { BaseAgent } from './BaseAgent.ts';
+import type { BaseAgent } from './BaseAgent.ts';
 import { globalToolRegistry } from '../tools/ToolRegistry.ts';
 import { globalEventStore } from '../core/EventStore.ts';
 import type { ToolRegistry } from '../tools/ToolRegistry.ts';
