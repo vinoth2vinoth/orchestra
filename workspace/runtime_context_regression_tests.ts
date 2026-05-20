@@ -9,6 +9,7 @@ import { WorkflowSuspendedError } from '../src/framework/orchestration/WorkflowS
 import type { CheckpointData } from '../src/framework/orchestration/Checkpointer.ts';
 import type { FrameworkEvent } from '../src/framework/core/types.ts';
 import { AgentRegistry } from '../src/framework/agents/AgentRegistry.ts';
+import { globalIAMInterceptor } from '../src/framework/security/IAMInterceptor.ts';
 import { z } from 'zod';
 
 class EchoManagerAgent extends BaseAgent {
@@ -87,6 +88,17 @@ class RuntimeMutationAgent extends BaseAgent {
       execute: async () => 'ok'
     });
     return 'runtime-mutated';
+  }
+}
+
+class ToolCallingAgent extends BaseAgent {
+  async execute(): Promise<any> {
+    const tools = this.runtime.agentRegistry.getToolsForAgent(this.card.id);
+    const searchDatabase = tools.searchDatabase;
+    if (!searchDatabase?.execute) {
+      throw new Error('searchDatabase tool was not available to the scoped AI Agent');
+    }
+    return await searchDatabase.execute({ query: 'original-query' });
   }
 }
 
@@ -255,6 +267,56 @@ async function testRuntimePluginAndTenantScope() {
   }
   if (result.tenantId !== 'tenant-runtime-test') {
     throw new Error(`Execution context tenant was not scoped: ${JSON.stringify(result)}`);
+  }
+}
+
+async function testToolExecutionUsesScopedPluginRegistry() {
+  const tenantId = `tool-plugin-tenant-${Date.now()}`;
+  globalIAMInterceptor.registerPolicy({
+    tenantId,
+    allowedTools: ['searchDatabase'],
+    requiredSecrets: {}
+  });
+
+  const pluginRegistry = new PluginRegistry();
+  pluginRegistry.register({
+    name: 'ScopedToolPlugin',
+    version: '1.0.0',
+    async beforeToolInvoke(_agentId, toolName, args) {
+      if (toolName === 'searchDatabase') {
+        return { args: { ...args, query: 'scoped-query' } };
+      }
+    }
+  });
+
+  const agent = new ToolCallingAgent(
+    'ScopedToolCaller',
+    'Calls a framework tool through the scoped runtime.',
+    'MANAGER',
+    new MemoryMesh(),
+    { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+    ['knowledge_base'],
+    undefined,
+    undefined,
+    undefined,
+    'scoped-tool-caller'
+  );
+
+  const result = await new Orchestrator({
+    tenantId,
+    pluginRegistry
+  }).executeWorkflow(
+    'call scoped tool',
+    {
+      paradigm: 'HIERARCHICAL',
+      agents: [agent],
+      maxRetries: 0
+    },
+    `TOOL_SCOPE_${Date.now()}`
+  );
+
+  if (typeof result !== 'string' || !result.includes('scoped-query')) {
+    throw new Error(`Tool did not use scoped plugin registry: ${JSON.stringify(result)}`);
   }
 }
 
@@ -468,6 +530,7 @@ const tests = [
   ['workflow injects runtime into agents', testWorkflowInjectsRuntimeIntoAgents],
   ['manager uses scoped agent registry for tool grant', testManagerUsesScopedAgentRegistryForToolGrant],
   ['runtime plugin and tenant scope', testRuntimePluginAndTenantScope],
+  ['tool execution uses scoped plugin registry', testToolExecutionUsesScopedPluginRegistry],
   ['tenant-only runtime gets scoped agent registry', testTenantOnlyRuntimeGetsScopedAgentRegistry],
   ['runtime checkpointer scope', testRuntimeCheckpointerScope],
   ['runtime state store scope for suspended workflow', testRuntimeStateStoreScopeForSuspendedWorkflow],

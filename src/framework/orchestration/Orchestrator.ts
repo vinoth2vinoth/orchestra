@@ -529,7 +529,8 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     tenantId: blackboard?._tenantId || runtime.tenantId, 
                     agentId: agent.card.id,
                     threadId,
-                    capabilities: agent.card.capabilities
+                    capabilities: agent.card.capabilities,
+                    runtime
                 };
                 
                 const { runWithContext } = await import('../core/ExecutionContext.ts');

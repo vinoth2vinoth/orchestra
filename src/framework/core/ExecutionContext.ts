@@ -1,10 +1,12 @@
 import { AsyncLocalStorage } from 'async_hooks';
+import type { RuntimeServices } from './RuntimeContext.ts';
 
 export interface ExecutionContext {
     tenantId: string;
     agentId: string;
     threadId: string;
     capabilities: string[];
+    runtime?: RuntimeServices;
 }
 
 export const executionAsyncStorage = new AsyncLocalStorage<ExecutionContext>();

@@ -34,10 +34,12 @@ export class ToolRegistry {
                 }
 
                 const { agentId, threadId, tenantId, capabilities } = context;
+                const pluginRegistry = context.runtime?.pluginRegistry || globalPluginRegistry;
+                const escalationManager = context.runtime?.escalationManager || globalEscalationManager;
 
                 // Step 1: Execute High Risk Check
                 if (options.highRisk) {
-                    const res = await globalEscalationManager.requestApproval(
+                    const res = await escalationManager.requestApproval(
                         threadId,
                         agentId,
                         `Execution of High-Risk Tool: ${name}`,
@@ -57,16 +59,16 @@ export class ToolRegistry {
                 }, name, args);
 
                 // Step 3: Emit Hooks
-                const modifier = await globalPluginRegistry.emitBeforeToolInvoke(agentId, name, securedArgs, threadId);
-                await globalPluginRegistry.emitOnToolCalled(agentId, modifier.toolName, modifier.args, threadId);
+                const modifier = await pluginRegistry.emitBeforeToolInvoke(agentId, name, securedArgs, threadId);
+                await pluginRegistry.emitOnToolCalled(agentId, modifier.toolName, modifier.args, threadId);
                 
                 // Step 4: Execute using secured arguments
                 try {
                     const result = await execute(modifier.args);
-                    await globalPluginRegistry.emitAfterToolInvoke(agentId, modifier.toolName, modifier.args, result, threadId);
+                    await pluginRegistry.emitAfterToolInvoke(agentId, modifier.toolName, modifier.args, result, threadId);
                     return result;
                 } catch (error) {
-                    await globalPluginRegistry.emitOnToolFault(agentId, modifier.toolName, modifier.args, error, threadId);
+                    await pluginRegistry.emitOnToolFault(agentId, modifier.toolName, modifier.args, error, threadId);
                     throw error;
                 }
             }

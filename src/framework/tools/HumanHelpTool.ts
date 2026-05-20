@@ -18,9 +18,10 @@ export const registerHumanHelpTool = () => {
         async (args: any) => {
             const context = getExecutionContext();
             const { threadId, agentId } = context;
+            const escalationManager = context.runtime?.escalationManager || globalEscalationManager;
 
             // Use the escalation manager to suspend and wait
-            return await globalEscalationManager.requestApproval(
+            return await escalationManager.requestApproval(
                 threadId, 
                 agentId, 
                 args.description || "Agent requested help", 
