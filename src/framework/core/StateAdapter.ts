@@ -29,7 +29,7 @@ export interface StateAdapter {
 export class MemoryStateAdapter implements StateAdapter {
     private storage = new Map<string, any>();
     private lists = new Map<string, any[]>();
-    private locks = new Set<string>();
+    private locks = new Map<string, number>();
     private mutationQueues = new Map<string, Promise<any>>();
 
     public async get<T>(key: string): Promise<T | null> {
@@ -99,9 +99,11 @@ export class MemoryStateAdapter implements StateAdapter {
         return list.slice(start, actualEnd);
     }
 
-    public async acquireLock(key: string, _ttlMs: number): Promise<boolean> {
-        if (this.locks.has(key)) return false;
-        this.locks.add(key);
+    public async acquireLock(key: string, ttlMs: number): Promise<boolean> {
+        const now = Date.now();
+        const expiresAt = this.locks.get(key);
+        if (expiresAt && expiresAt > now) return false;
+        this.locks.set(key, now + Math.max(1, ttlMs));
         return true;
     }
 

@@ -62,6 +62,15 @@ async function testAtomicStateMutation() {
   assert(casFinal === 501, `Expected CAS final value 501, got ${casFinal}`);
 }
 
+async function testMemoryLockExpiresAfterTtl() {
+  const adapter = new MemoryStateAdapter();
+  assert(await adapter.acquireLock('ttl-lock', 25), 'Expected first lock acquisition');
+  assert(!(await adapter.acquireLock('ttl-lock', 25)), 'Expected active lock to block second acquisition');
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert(await adapter.acquireLock('ttl-lock', 25), 'Expected expired lock to be acquirable');
+  await adapter.releaseLock('ttl-lock');
+}
+
 async function testStressSuiteFailsOnCorruption() {
   const result = await InfraStressor.runAll();
   assert(result.stateOps.collisions === 0, `Expected no state collisions, got ${result.stateOps.collisions}`);
@@ -128,6 +137,7 @@ async function main() {
     ['api auth middleware', testApiAuthMiddleware],
     ['storage traversal blocked', testStorageTraversalBlocked],
     ['atomic state mutation', testAtomicStateMutation],
+    ['memory lock ttl expires', testMemoryLockExpiresAfterTtl],
     ['stress suite correctness', testStressSuiteFailsOnCorruption],
   ] as const;
 

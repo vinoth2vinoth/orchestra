@@ -17,20 +17,22 @@ export interface AuditEntry {
  * Maintains a signed sequence of governance-critical events.
  */
 export class AuditLog {
+    private static writeQueues: Map<string, Promise<void>> = new Map();
     private lastHash: string = 'GENESIS';
     private initialized = false;
+    private readonly lockWaitMs = this.parsePositiveNumber(process.env.ORCHESTRA_AUDIT_LOCK_WAIT_MS, 30000);
 
     private getLogPath(date: Date = new Date()) {
         return `.orchestra/audit/log_${date.toISOString().split('T')[0]}.jsonl`;
     }
 
-    private async initializeFromTail(force = false) {
+    private async initializeFromTail(logPath: string = this.getLogPath(), force = false) {
         if (this.initialized && !force) return;
         this.initialized = true;
         this.lastHash = 'GENESIS';
 
         try {
-            const logData = await globalStorageMesh.readFile(this.getLogPath());
+            const logData = await globalStorageMesh.readFile(logPath);
             const lines = logData.toString().split('\n').filter(Boolean);
             for (let i = lines.length - 1; i >= 0; i--) {
                 try {
@@ -55,8 +57,9 @@ export class AuditLog {
      * In a production environment, this should write to an append-only HSM or WORM storage.
      */
     public async log(threadId: string, agentId: string, action: string, description: string): Promise<void> {
-        await this.withAuditLock(async () => {
-            await this.initializeFromTail(true);
+        const logPath = this.getLogPath();
+        await this.enqueueWrite(logPath, async () => this.withAuditLock(logPath, async () => {
+            await this.initializeFromTail(logPath, true);
             const timestamp = Date.now();
             const entryBody = `${timestamp}|${threadId}|${agentId}|${action}|${description}|${this.lastHash}`;
             const hash = createHash('sha256').update(entryBody).digest('hex');
@@ -71,21 +74,18 @@ export class AuditLog {
                 hash
             };
 
-            this.lastHash = hash;
-
             // Persist to the Storage Mesh
-            const logPath = this.getLogPath();
             const logLine = JSON.stringify(entry) + '\n';
             
             try {
                 await globalStorageMesh.appendFile(logPath, logLine);
+                this.lastHash = hash;
                 console.log(`[AUDIT] ${action} logged for ${agentId} in thread ${threadId}`);
-            } catch (err) {
-                // If the mesh doesn't support append, we fallback to read-and-rewrite
-                // In our framework, we assume Mesh handles basic serialization
+            } catch (err: any) {
                 console.error('[AUDIT] Failed to persist entry:', err);
+                throw err;
             }
-        });
+        }));
     }
 
     public async verify(date: Date = new Date(), options: { fromTimestamp?: number } = {}): Promise<{ valid: boolean; entries: number; errors: string[] }> {
@@ -135,12 +135,12 @@ export class AuditLog {
         return this.verify(date);
     }
 
-    private async withAuditLock<T>(operation: () => Promise<T>): Promise<T> {
-        const lockKey = `audit:${this.getLogPath()}`;
-        const deadline = Date.now() + 5000;
+    private async withAuditLock<T>(logPath: string, operation: () => Promise<T>): Promise<T> {
+        const lockKey = `audit:${logPath}`;
+        const deadline = Date.now() + this.lockWaitMs;
         while (!(await globalStateAdapter.acquireLock(lockKey, 5000))) {
-            if (Date.now() > deadline) throw new Error('Timed out acquiring audit log lock');
-            await new Promise(resolve => setTimeout(resolve, 10));
+            if (Date.now() > deadline) throw new Error(`Timed out acquiring audit log lock after ${this.lockWaitMs}ms`);
+            await new Promise(resolve => setTimeout(resolve, 25));
         }
 
         try {
@@ -148,6 +148,30 @@ export class AuditLog {
         } finally {
             await globalStateAdapter.releaseLock(lockKey);
         }
+    }
+
+    private async enqueueWrite<T>(logPath: string, operation: () => Promise<T>): Promise<T> {
+        const previous = AuditLog.writeQueues.get(logPath) || Promise.resolve();
+        let release!: () => void;
+        const current = new Promise<void>(resolve => {
+            release = resolve;
+        });
+        AuditLog.writeQueues.set(logPath, previous.then(() => current, () => current));
+
+        await previous.catch(() => undefined);
+        try {
+            return await operation();
+        } finally {
+            release();
+            if (AuditLog.writeQueues.get(logPath) === current) {
+                AuditLog.writeQueues.delete(logPath);
+            }
+        }
+    }
+
+    private parsePositiveNumber(value: string | undefined, fallback: number): number {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     }
 }
 

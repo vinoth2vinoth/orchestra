@@ -13,8 +13,23 @@ async function testConcurrentAuditEntriesVerifyAsChainSegment() {
   }
 }
 
+async function testConcurrentAuditInstancesShareWriteQueue() {
+  const fromTimestamp = Date.now();
+  const writes = Array.from({ length: 25 }, (_, index) => {
+    const audit = new AuditLog();
+    return audit.log('AUDIT_QUEUE_TEST', `queue-agent-${index}`, 'QUEUE_TEST_ACTION', `queued entry ${index}`);
+  });
+
+  await Promise.all(writes);
+  const result = await new AuditLog().verify(new Date(), { fromTimestamp });
+  if (!result.valid || result.entries < 25) {
+    throw new Error(`Queued audit chain verification failed: ${JSON.stringify(result)}`);
+  }
+}
+
 const tests = [
-  ['concurrent audit entries verify as chain segment', testConcurrentAuditEntriesVerifyAsChainSegment]
+  ['concurrent audit entries verify as chain segment', testConcurrentAuditEntriesVerifyAsChainSegment],
+  ['concurrent audit instances share write queue', testConcurrentAuditInstancesShareWriteQueue]
 ] as const;
 
 const results = [];
