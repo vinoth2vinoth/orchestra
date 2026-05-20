@@ -29,19 +29,20 @@ async function testMapReduceConfigErrorNoBackoff() {
     maxRetries: 3
   };
 
-  const start = Date.now();
+  const retryBackoff = watchRetryBackoffTimers();
   try {
     await new Orchestrator().executeWorkflow('This is invalid because there is no planner.', config, `CLAUDE_MAP_${Date.now()}`);
   } catch (err: any) {
-    const durationMs = Date.now() - start;
+    retryBackoff.restore();
     if (!(err instanceof ConfigurationError || err.name === 'ConfigurationError')) {
       throw new Error(`Expected ConfigurationError, got ${err.name}: ${err.message}`);
     }
-    if (durationMs > 500) {
-      throw new Error(`ConfigurationError was retried/backed off for ${durationMs}ms`);
+    if (retryBackoff.count > 0) {
+      throw new Error(`ConfigurationError scheduled ${retryBackoff.count} retry backoff timer(s)`);
     }
     return;
   }
+  retryBackoff.restore();
 
   throw new Error('Expected MAP_REDUCE without PLANNER to fail.');
 }
@@ -55,21 +56,42 @@ async function testGraphConfigErrorNoBackoff() {
     maxRetries: 3
   };
 
-  const start = Date.now();
+  const retryBackoff = watchRetryBackoffTimers();
   try {
     await new Orchestrator().executeWorkflow('This graph references a missing agent.', config, `CLAUDE_GRAPH_${Date.now()}`);
   } catch (err: any) {
-    const durationMs = Date.now() - start;
+    retryBackoff.restore();
     if (!(err instanceof ConfigurationError || err.name === 'ConfigurationError')) {
       throw new Error(`Expected ConfigurationError, got ${err.name}: ${err.message}`);
     }
-    if (durationMs > 500) {
-      throw new Error(`Graph ConfigurationError was retried/backed off for ${durationMs}ms`);
+    if (retryBackoff.count > 0) {
+      throw new Error(`Graph ConfigurationError scheduled ${retryBackoff.count} retry backoff timer(s)`);
     }
     return;
   }
+  retryBackoff.restore();
 
   throw new Error('Expected GRAPH with an unknown edge endpoint to fail.');
+}
+
+function watchRetryBackoffTimers() {
+  const originalSetTimeout = globalThis.setTimeout;
+  let count = 0;
+  globalThis.setTimeout = ((handler: any, timeout?: any, ...args: any[]) => {
+    if (typeof timeout === 'number' && timeout >= 1000) {
+      count++;
+    }
+    return originalSetTimeout(handler, timeout, ...args);
+  }) as typeof setTimeout;
+
+  return {
+    get count() {
+      return count;
+    },
+    restore() {
+      globalThis.setTimeout = originalSetTimeout;
+    }
+  };
 }
 
 const tests = [

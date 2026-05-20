@@ -9,13 +9,22 @@ import * as crypto from 'crypto';
 interface DaemonLease {
     runId: string;
     startedAt: number;
+    lastHeartbeatAt: number;
     expiresAt: number;
 }
 
 interface AutonomousDaemonOptions {
     staleTaskMs?: number;
+    maxTaskRuntimeMs?: number;
+    heartbeatIntervalMs?: number;
     maxAttempts?: number;
     now?: () => number;
+}
+
+interface ActiveDaemonTask {
+    runId: string;
+    timeout: NodeJS.Timeout;
+    heartbeat: NodeJS.Timeout;
 }
 
 export class AutonomousDaemon {
@@ -23,14 +32,18 @@ export class AutonomousDaemon {
     private pollIntervalMs: number;
     private timer: NodeJS.Timeout | null = null;
     private memory = new MemoryMesh();
-    private activeTasks = new Set<string>();
+    private activeTasks = new Map<string, ActiveDaemonTask>();
     private readonly staleTaskMs: number;
+    private readonly maxTaskRuntimeMs: number;
+    private readonly heartbeatIntervalMs: number;
     private readonly maxAttempts: number;
     private readonly now: () => number;
 
     constructor(pollIntervalMs = 15000, options: AutonomousDaemonOptions = {}) {
         this.pollIntervalMs = pollIntervalMs;
         this.staleTaskMs = options.staleTaskMs ?? this.parsePositiveNumber(process.env.ORCHESTRA_DAEMON_STALE_TASK_MS, 10 * 60 * 1000);
+        this.maxTaskRuntimeMs = options.maxTaskRuntimeMs ?? this.parsePositiveNumber(process.env.ORCHESTRA_DAEMON_MAX_TASK_RUNTIME_MS, this.staleTaskMs);
+        this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? this.parsePositiveNumber(process.env.ORCHESTRA_DAEMON_HEARTBEAT_INTERVAL_MS, Math.max(1000, Math.floor(this.staleTaskMs / 3)));
         this.maxAttempts = options.maxAttempts ?? this.parsePositiveNumber(process.env.ORCHESTRA_DAEMON_MAX_ATTEMPTS, 3);
         this.now = options.now || Date.now;
     }
@@ -47,11 +60,13 @@ export class AutonomousDaemon {
     }
 
     public stop() {
-        if (!this.isRunning) return;
         this.isRunning = false;
         if (this.timer) {
             clearInterval(this.timer);
             this.timer = null;
+        }
+        for (const key of this.activeTasks.keys()) {
+            this.clearActiveTask(key);
         }
         console.log(`[AutonomousDaemon] Stopped background monitoring`);
     }
@@ -192,7 +207,8 @@ export class AutonomousDaemon {
                                 return root;
                             }
 
-                            t.status = isError ? 'TODO' : 'DONE';
+                            const attempts = Number(t.daemonAttempts || 0);
+                            t.status = isError ? (attempts >= this.maxAttempts ? 'BLOCKED' : 'TODO') : 'DONE';
                             delete t.daemonLease;
                             t.description = this.appendDaemonNote(t.description, `${isError ? 'Failed' : 'Completed'} run ${runId}:\n${conclusionStr.substring(0, 500)}`);
                             finalized = true;
@@ -213,17 +229,79 @@ export class AutonomousDaemon {
 
     private launchBackgroundTask(project: any, task: any, lease: DaemonLease) {
         const key = this.taskKey(project.id, task.id);
-        this.activeTasks.add(key);
         console.log(`[AutonomousDaemon] Picking up background task: ${task.title}`);
 
+        const timeout = setTimeout(() => {
+            this.timeoutActiveTask(project.id, task.id, lease.runId).catch(err => {
+                console.error(`[AutonomousDaemon] Failed to timeout task ${task.id}:`, err);
+            });
+        }, this.maxTaskRuntimeMs);
+
+        const heartbeat = setInterval(() => {
+            this.heartbeatTask(project.id, task.id, lease.runId).catch(err => {
+                console.error(`[AutonomousDaemon] Failed to heartbeat task ${task.id}:`, err);
+            });
+        }, this.heartbeatIntervalMs);
+
+        if (timeout.unref) timeout.unref();
+        if (heartbeat.unref) heartbeat.unref();
+        this.activeTasks.set(key, { runId: lease.runId, timeout, heartbeat });
+
         this.executeSwarmTask(project, task).then(async (result) => {
+            this.clearActiveTask(key, lease.runId);
             await this.finalizeTask(project.id, task.id, lease.runId, result);
         }).catch(async (err) => {
+            this.clearActiveTask(key, lease.runId);
             console.error(`[AutonomousDaemon] Background execution failed for ${task.id}:`, err);
             await this.finalizeTask(project.id, task.id, lease.runId, `Failed: ${err.message}`, true);
         }).finally(() => {
-            this.activeTasks.delete(key);
+            this.clearActiveTask(key, lease.runId);
         });
+    }
+
+    private async heartbeatTask(projectId: string, taskId: string, runId: string) {
+        await mutateProjectBoard((root) => {
+            const now = this.now();
+            for (const project of root.projects || []) {
+                if (project.id !== projectId) continue;
+                for (const task of project.tasks || []) {
+                    if (task.id !== taskId || task.daemonLease?.runId !== runId) continue;
+                    task.daemonLease.lastHeartbeatAt = now;
+                    task.daemonLease.expiresAt = now + this.staleTaskMs;
+                    globalEventStore.append({
+                        type: 'SYSTEM_HOOK',
+                        sourceAgentId: 'AUTONOMOUS_DAEMON',
+                        threadId: 'SYSTEM',
+                        payload: { action: 'BACKGROUND_TASK_HEARTBEAT', projectId, taskId, runId }
+                    });
+                }
+            }
+            return root;
+        });
+    }
+
+    private async timeoutActiveTask(projectId: string, taskId: string, runId: string) {
+        const key = this.taskKey(projectId, taskId);
+        const active = this.activeTasks.get(key);
+        if (!active || active.runId !== runId) return;
+
+        this.clearActiveTask(key, runId);
+        console.warn(`[AutonomousDaemon] Background task ${taskId} timed out after ${this.maxTaskRuntimeMs}ms`);
+        await this.finalizeTask(projectId, taskId, runId, `Timed out after ${this.maxTaskRuntimeMs}ms`, true);
+        globalEventStore.append({
+            type: 'SYSTEM_HOOK',
+            sourceAgentId: 'AUTONOMOUS_DAEMON',
+            threadId: 'SYSTEM',
+            payload: { action: 'BACKGROUND_TASK_TIMED_OUT', projectId, taskId, runId, maxTaskRuntimeMs: this.maxTaskRuntimeMs }
+        });
+    }
+
+    private clearActiveTask(key: string, runId?: string) {
+        const active = this.activeTasks.get(key);
+        if (!active || (runId && active.runId !== runId)) return;
+        clearTimeout(active.timeout);
+        clearInterval(active.heartbeat);
+        this.activeTasks.delete(key);
     }
 
     private isDaemonTask(task: any): boolean {
@@ -238,6 +316,7 @@ export class AutonomousDaemon {
         return {
             runId: crypto.randomUUID(),
             startedAt,
+            lastHeartbeatAt: startedAt,
             expiresAt: startedAt + this.staleTaskMs
         };
     }

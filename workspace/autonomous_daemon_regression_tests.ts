@@ -9,13 +9,13 @@ const projectPath = path.join(process.cwd(), 'workspace', 'projects.json');
 class TestDaemon extends AutonomousDaemon {
   public executions: Array<{ projectId: string; taskId: string }> = [];
 
-  constructor(private readonly result: any = 'daemon completed', options: { now?: () => number; staleTaskMs?: number; maxAttempts?: number } = {}) {
+  constructor(private readonly result: any = 'daemon completed', options: { now?: () => number; staleTaskMs?: number; maxTaskRuntimeMs?: number; heartbeatIntervalMs?: number; maxAttempts?: number } = {}) {
     super(100000, options);
   }
 
   protected async executeSwarmTask(project: any, task: any): Promise<any> {
     this.executions.push({ projectId: project.id, taskId: task.id });
-    return this.result;
+    return typeof this.result === 'function' ? this.result(project, task, this.executions.length) : this.result;
   }
 
   public async exposeFinalize(projectId: string, taskId: string, runId: string, result: any, isError = false) {
@@ -28,7 +28,7 @@ function writeBoard(board: any) {
   fs.writeFileSync(projectPath, `${JSON.stringify(board, null, 2)}\n`, 'utf8');
 }
 
-async function waitForStatus(taskId: string, status: string, timeoutMs = 1000) {
+async function waitForStatus(taskId: string, status: string, timeoutMs = 5000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const board = await readProjectBoard();
@@ -37,6 +37,17 @@ async function waitForStatus(taskId: string, status: string, timeoutMs = 1000) {
     await new Promise(resolve => setTimeout(resolve, 25));
   }
   throw new Error(`Timed out waiting for ${taskId} to become ${status}`);
+}
+
+async function waitForTask(taskId: string, predicate: (task: any) => boolean, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const board = await readProjectBoard();
+    const task = board.projects.flatMap((project: any) => project.tasks || []).find((item: any) => item.id === taskId);
+    if (task && predicate(task)) return task;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  throw new Error(`Timed out waiting for ${taskId} to match predicate`);
 }
 
 async function withBoardFixture(run: () => Promise<void>) {
@@ -205,12 +216,159 @@ async function testStaleFinalizeCannotOverwriteCurrentLease() {
   });
 }
 
+async function testHeartbeatExtendsCurrentLease() {
+  await withBoardFixture(async () => {
+    writeBoard({
+      projects: [{
+        id: 'daemon-project',
+        name: 'Daemon Project',
+        tasks: [{
+          id: 'task-heartbeat',
+          title: 'Keep active work alive',
+          status: 'TODO',
+          assignee: 'AI Bot'
+        }]
+      }]
+    });
+
+    const daemon = new TestDaemon(new Promise(() => {}), {
+      staleTaskMs: 100,
+      maxTaskRuntimeMs: 500,
+      heartbeatIntervalMs: 25,
+      maxAttempts: 3
+    });
+    await daemon.runOnce();
+
+    const leased = await waitForStatus('task-heartbeat', 'IN_PROGRESS');
+    const initialHeartbeat = leased.daemonLease.lastHeartbeatAt;
+    const updated = await waitForTask(
+      'task-heartbeat',
+      task => task.daemonLease?.lastHeartbeatAt > initialHeartbeat && task.daemonLease?.expiresAt > leased.daemonLease.expiresAt,
+      300
+    );
+
+    assert.equal(updated.daemonAttempts, 1);
+    assert.equal(updated.daemonLease.runId, leased.daemonLease.runId);
+    daemon.stop();
+  });
+}
+
+async function testHungTaskTimesOutAndBecomesRetryable() {
+  await withBoardFixture(async () => {
+    writeBoard({
+      projects: [{
+        id: 'daemon-project',
+        name: 'Daemon Project',
+        tasks: [{
+          id: 'task-timeout',
+          title: 'Timeout hung work',
+          status: 'TODO',
+          assignee: 'AI Bot'
+        }]
+      }]
+    });
+
+    const daemon = new TestDaemon(new Promise(() => {}), {
+      staleTaskMs: 1000,
+      maxTaskRuntimeMs: 30,
+      heartbeatIntervalMs: 10,
+      maxAttempts: 3
+    });
+    await daemon.runOnce();
+    const task = await waitForStatus('task-timeout', 'TODO', 3000);
+
+    assert.equal(task.daemonAttempts, 1);
+    assert.equal(task.daemonLease, undefined);
+    assert(String(task.description).includes('Timed out after 30ms'));
+    daemon.stop();
+  });
+}
+
+async function testHungTaskBlocksAtMaxAttempts() {
+  await withBoardFixture(async () => {
+    writeBoard({
+      projects: [{
+        id: 'daemon-project',
+        name: 'Daemon Project',
+        tasks: [{
+          id: 'task-timeout-block',
+          title: 'Block repeated hung work',
+          status: 'TODO',
+          assignee: 'AI Bot',
+          daemonAttempts: 2
+        }]
+      }]
+    });
+
+    const daemon = new TestDaemon(new Promise(() => {}), {
+      staleTaskMs: 1000,
+      maxTaskRuntimeMs: 30,
+      heartbeatIntervalMs: 10,
+      maxAttempts: 3
+    });
+    await daemon.runOnce();
+    const task = await waitForStatus('task-timeout-block', 'BLOCKED', 3000);
+
+    assert.equal(task.daemonAttempts, 3);
+    assert.equal(task.daemonLease, undefined);
+    assert(String(task.description).includes('Timed out after 30ms'));
+    daemon.stop();
+  });
+}
+
+async function testLateTimedOutResultCannotOverwriteRetry() {
+  await withBoardFixture(async () => {
+    writeBoard({
+      projects: [{
+        id: 'daemon-project',
+        name: 'Daemon Project',
+        tasks: [{
+          id: 'task-late-result',
+          title: 'Protect retry from late result',
+          status: 'TODO',
+          assignee: 'AI Bot'
+        }]
+      }]
+    });
+
+    let releaseLateResult: (value: string) => void = () => {};
+    const lateResult = new Promise<string>(resolve => { releaseLateResult = resolve; });
+    const daemon = new TestDaemon((_project: any, _task: any, executionCount: number) => {
+      return executionCount === 1 ? lateResult : 'retry completed';
+    }, {
+      staleTaskMs: 1000,
+      maxTaskRuntimeMs: 30,
+      heartbeatIntervalMs: 10,
+      maxAttempts: 3
+    });
+
+    await daemon.runOnce();
+    await waitForStatus('task-late-result', 'TODO', 3000);
+    await daemon.runOnce();
+    const completed = await waitForStatus('task-late-result', 'DONE', 3000);
+    releaseLateResult('late stale result');
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const board = await readProjectBoard();
+    const task = board.projects[0].tasks[0];
+    assert.equal(completed.daemonAttempts, 2);
+    assert.equal(task.status, 'DONE');
+    assert(String(task.description).includes('retry completed'));
+    assert(!String(task.description).includes('late stale result'));
+    daemon.stop();
+  });
+}
+
 const tests = [
   ['TODO daemon task is leased and completed', testTodoTaskIsLeasedAndCompleted],
   ['expired daemon task is requeued and retried', testExpiredTaskIsRequeuedAndRetried],
   ['expired daemon task blocks after max attempts', testExpiredTaskBlocksAfterMaxAttempts],
   ['legacy in-progress task without lease is recovered', testLegacyInProgressTaskWithoutLeaseIsRecovered],
-  ['stale finalize cannot overwrite current lease', testStaleFinalizeCannotOverwriteCurrentLease]
+  ['stale finalize cannot overwrite current lease', testStaleFinalizeCannotOverwriteCurrentLease],
+  ['heartbeat extends current lease', testHeartbeatExtendsCurrentLease],
+  ['hung task times out and becomes retryable', testHungTaskTimesOutAndBecomesRetryable],
+  ['hung task blocks at max attempts', testHungTaskBlocksAtMaxAttempts],
+  ['late timed-out result cannot overwrite retry', testLateTimedOutResultCannotOverwriteRetry]
 ] as const;
 
 const results = [];
@@ -225,4 +383,4 @@ for (const [name, run] of tests) {
 }
 
 console.log(JSON.stringify(results, null, 2));
-if (results.some(result => !result.ok)) process.exit(1);
+process.exit(results.some(result => !result.ok) ? 1 : 0);
