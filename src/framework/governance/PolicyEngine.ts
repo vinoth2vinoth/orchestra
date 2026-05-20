@@ -1,4 +1,4 @@
-import { globalEventStore } from '../core/EventStore.ts';
+import { EventStore, globalEventStore } from '../core/EventStore.ts';
 
 export interface Policy {
     id: string;
@@ -15,7 +15,7 @@ export interface Policy {
 export class PolicyEngine {
     private policies: Policy[] = [];
 
-    constructor() {
+    constructor(private eventStore: EventStore = globalEventStore) {
         this.loadDefaultPolicies();
     }
 
@@ -42,7 +42,7 @@ export class PolicyEngine {
         }
 
         if (violations.length > 0) {
-            globalEventStore.append({
+            this.eventStore.append({
                 type: 'SYSTEM_HOOK',
                 sourceAgentId: 'GOVERNANCE',
                 threadId,

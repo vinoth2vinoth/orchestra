@@ -63,6 +63,12 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
     const genealogy = options.genealogy || (
         options.eventStore ? new GenealogyTracker(eventStore) : globalGenealogy
     );
+    const circuitBreakers = options.circuitBreakers || (
+        options.eventStore ? new CircuitBreakerRegistry(eventStore) : globalCircuitBreakers
+    );
+    const policyEngine = options.policyEngine || (
+        options.eventStore ? new PolicyEngine(eventStore) : globalPolicyEngine
+    );
     const agentRegistry = options.agentRegistry || (
         needsScopedRegistry
             ? new AgentRegistry({ eventStore, toolRegistry })
@@ -73,10 +79,10 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         tenantId: options.tenantId || 'GLOBAL',
         stateAdapter: options.stateAdapter || globalStateAdapter,
         pluginRegistry: options.pluginRegistry || globalPluginRegistry,
-        circuitBreakers: options.circuitBreakers || globalCircuitBreakers,
+        circuitBreakers,
         queueBroker: options.queueBroker || globalQueueBroker,
         workerPool: options.workerPool || globalWorkerPool,
-        policyEngine: options.policyEngine || globalPolicyEngine,
+        policyEngine,
         auditLog,
         agentRegistry,
         eventStore,

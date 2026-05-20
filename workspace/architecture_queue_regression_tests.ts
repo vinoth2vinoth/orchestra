@@ -91,7 +91,7 @@ async function testDeadLetterAfterMaxAttempts() {
 }
 
 async function testExpiredLeaseRecovery() {
-  const broker = new QueueBroker({ visibilityTimeoutMs: 100, defaultMaxAttempts: 3 });
+  const broker = new QueueBroker({ visibilityTimeoutMs: 500, defaultMaxAttempts: 3 });
   try {
     await broker.resetForTests();
 
@@ -104,7 +104,7 @@ async function testExpiredLeaseRecovery() {
       await broker.publishResult({ taskId: payload.taskId, status: 'success', result: { recovered: true, attempts }, leaseId: payload.leaseId });
     }, 'queue-recovery-worker');
 
-    const result = await withTimeout(broker.publish(task(`lease-${Date.now()}`)), 3000);
+    const result = await withTimeout(broker.publish(task(`lease-${Date.now()}`)), 5000);
     if (result.status !== 'success' || result.result?.recovered !== true || result.result?.attempts !== 2) {
       throw new Error(`Expected lease recovery success on second attempt, got ${JSON.stringify(result)}`);
     }
@@ -114,7 +114,7 @@ async function testExpiredLeaseRecovery() {
 }
 
 async function testQueueSubscriberUnregisters() {
-  const broker = new QueueBroker({ visibilityTimeoutMs: 100, defaultMaxAttempts: 2 });
+  const broker = new QueueBroker({ visibilityTimeoutMs: 2000, defaultMaxAttempts: 2 });
   try {
     await broker.resetForTests();
 

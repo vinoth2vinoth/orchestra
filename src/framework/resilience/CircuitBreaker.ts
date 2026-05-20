@@ -1,4 +1,4 @@
-import { globalEventStore } from '../core/EventStore.ts';
+import { EventStore, globalEventStore } from '../core/EventStore.ts';
 
 export class CircuitBreaker {
     private failures = 0;
@@ -14,7 +14,7 @@ export class CircuitBreaker {
     private readonly PREDICTIVE_ERROR_VELOCITY_WINDOW = 60000; // 1 minute
     private errorTimestampHistory: number[] = [];
 
-    constructor(maxFailures = 3, retryDelayMs = 2000) {
+    constructor(maxFailures = 3, retryDelayMs = 2000, private eventStore: EventStore = globalEventStore) {
         this.maxFailures = maxFailures;
         this.retryDelayMs = retryDelayMs;
     }
@@ -25,7 +25,7 @@ export class CircuitBreaker {
         this.latencyHistory = [];
         this.errorTimestampHistory = [];
         this.nextAttemptTime = 0;
-        globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { action: 'MANUAL_RESET' } });
+        this.eventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { action: 'MANUAL_RESET' } });
     }
 
     private checkPredictiveAnalytics(): boolean {
@@ -35,7 +35,7 @@ export class CircuitBreaker {
         this.errorTimestampHistory = this.errorTimestampHistory.filter(ts => now - ts < this.PREDICTIVE_ERROR_VELOCITY_WINDOW);
         if (this.errorTimestampHistory.length >= 5) {
             // 5 errors in 1 minute is a predictive cluster
-            globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { action: 'PREDICTIVE_TRIP', reason: 'High error velocity detected' } });
+            this.eventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { action: 'PREDICTIVE_TRIP', reason: 'High error velocity detected' } });
             return true;
         }
 
@@ -45,7 +45,7 @@ export class CircuitBreaker {
             const lastLatency = this.latencyHistory[this.latencyHistory.length - 1];
             
             if (lastLatency > avgLatency * this.PREDICTIVE_LATENCY_SPIKE_RATIO) {
-                globalEventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { action: 'PREDICTIVE_TRIP', reason: `Latency anomaly: ${Math.round(lastLatency)}ms vs avg ${Math.round(avgLatency)}ms` } });
+                this.eventStore.append({ type: 'SYSTEM_HOOK', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { action: 'PREDICTIVE_TRIP', reason: `Latency anomaly: ${Math.round(lastLatency)}ms vs avg ${Math.round(avgLatency)}ms` } });
                 return true;
             }
         }
@@ -59,7 +59,7 @@ export class CircuitBreaker {
                 this.state = 'HALF_OPEN';
             } else {
                 if (fallback) {
-                    globalEventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { message: 'Circuit open, executing fallback' } });
+                    this.eventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { message: 'Circuit open, executing fallback' } });
                     return fallback();
                 }
                 throw new Error("Circuit is OPEN. Action blocked.");
@@ -108,12 +108,12 @@ export class CircuitBreaker {
             this.failures++;
             this.errorTimestampHistory.push(Date.now());
             
-            globalEventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { message: `Failure ${this.failures}/${this.maxFailures}` } });
+            this.eventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { message: `Failure ${this.failures}/${this.maxFailures}` } });
             
             if (this.failures >= this.maxFailures) {
                 this.state = 'OPEN';
                 this.nextAttemptTime = Date.now() + this.retryDelayMs * (this.failures); // Exponential backoff scaling
-                globalEventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { message: 'Circuit tripped to OPEN' } });
+                this.eventStore.append({ type: 'ERROR_THROWN', sourceAgentId: 'CIRCUIT_BREAKER', threadId: 'SYSTEM', payload: { message: 'Circuit tripped to OPEN' } });
                 
                 if (fallback) {
                     return fallback();
@@ -129,11 +129,13 @@ export const globalCircuitBreaker = new CircuitBreaker();
 export class CircuitBreakerRegistry {
     private breakers = new Map<string, CircuitBreaker>();
 
+    constructor(private eventStore: EventStore = globalEventStore) {}
+
     public get(key: string) {
         const normalizedKey = key || 'default';
         let breaker = this.breakers.get(normalizedKey);
         if (!breaker) {
-            breaker = new CircuitBreaker();
+            breaker = new CircuitBreaker(undefined, undefined, this.eventStore);
             this.breakers.set(normalizedKey, breaker);
         }
         return breaker;

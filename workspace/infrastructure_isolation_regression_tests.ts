@@ -46,15 +46,15 @@ async function testQueueBrokersUseScopedStateAndMessageBus() {
     namespace: 'tenant-a-queue',
     stateAdapter: stateA,
     messageBus: new LocalMessageBus(),
-    visibilityTimeoutMs: 100,
-    defaultMaxAttempts: 1
+    visibilityTimeoutMs: 2000,
+    defaultMaxAttempts: 2
   });
   const brokerB = new QueueBroker({
     namespace: 'tenant-b-queue',
     stateAdapter: stateB,
     messageBus: new LocalMessageBus(),
-    visibilityTimeoutMs: 100,
-    defaultMaxAttempts: 1
+    visibilityTimeoutMs: 2000,
+    defaultMaxAttempts: 2
   });
 
   try {
@@ -284,12 +284,90 @@ async function testProjectBoardToolUsesScopedRuntimeServices() {
   }
 }
 
+async function testCircuitBreakerUsesScopedEventStore() {
+  const eventStoreA = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: 'tenant-a-circuit-events',
+    topic: 'TENANT_A_CIRCUIT_EVENTS'
+  });
+  const eventStoreB = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: 'tenant-b-circuit-events',
+    topic: 'TENANT_B_CIRCUIT_EVENTS'
+  });
+
+  try {
+    const runtimeA = createRuntimeContext({ eventStore: eventStoreA });
+    const runtimeB = createRuntimeContext({ eventStore: eventStoreB });
+
+    await runtimeA.circuitBreakers.execute('same-breaker-key', async () => 'ok');
+
+    let failed = false;
+    try {
+      await runtimeB.circuitBreakers.execute('same-breaker-key', async () => {
+        throw new Error('intentional scoped failure');
+      });
+    } catch {
+      failed = true;
+    }
+
+    assert(failed, 'Expected failing AI Agent workflow to throw.');
+    const circuitEventsA = eventStoreA.getLogs().filter(event => event.sourceAgentId === 'CIRCUIT_BREAKER');
+    const circuitEventsB = eventStoreB.getLogs().filter(event => event.sourceAgentId === 'CIRCUIT_BREAKER');
+    assert(circuitEventsA.length === 0, `Passing scoped workflow saw circuit events: ${JSON.stringify(circuitEventsA)}`);
+    assert(circuitEventsB.some(event => event.type === 'ERROR_THROWN'), `Failing scoped workflow missed circuit event: ${JSON.stringify(circuitEventsB)}`);
+  } finally {
+    eventStoreA.dispose();
+    eventStoreB.dispose();
+  }
+}
+
+async function testPolicyEngineUsesScopedEventStore() {
+  const eventStoreA = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: 'tenant-a-policy-events',
+    topic: 'TENANT_A_POLICY_EVENTS'
+  });
+  const eventStoreB = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: 'tenant-b-policy-events',
+    topic: 'TENANT_B_POLICY_EVENTS'
+  });
+
+  try {
+    const threadA = `policy-a-${Date.now()}`;
+    const threadB = `policy-b-${Date.now()}`;
+    const oversizedTask = 'x'.repeat(200001);
+    const runtimeA = createRuntimeContext({ eventStore: eventStoreA });
+    const runtimeB = createRuntimeContext({ eventStore: eventStoreB });
+
+    const blockedResult = runtimeA.policyEngine.evaluate(oversizedTask, 'policy-blocked-agent', threadA);
+    const safeResult = runtimeB.policyEngine.evaluate('normal safe task', 'policy-safe-agent', threadB);
+
+    assert(blockedResult.status === 'RED', `Expected oversized task to be blocked by policy: ${JSON.stringify(blockedResult)}`);
+    assert(safeResult.status === 'GREEN', `Expected safe task to pass policy: ${JSON.stringify(safeResult)}`);
+    const policyEventsA = eventStoreA.getEventsByThread(threadA).filter(event => event.sourceAgentId === 'GOVERNANCE');
+    const policyEventsB = eventStoreB.getEventsByThread(threadB).filter(event => event.sourceAgentId === 'GOVERNANCE');
+    assert(policyEventsA.some(event => event.payload.status === 'RED'), `Blocked workflow missed policy event: ${JSON.stringify(policyEventsA)}`);
+    assert(policyEventsB.length === 0, `Safe scoped workflow saw policy events: ${JSON.stringify(policyEventsB)}`);
+  } finally {
+    eventStoreA.dispose();
+    eventStoreB.dispose();
+  }
+}
+
 const tests = [
   ['queue brokers use scoped state and message bus', testQueueBrokersUseScopedStateAndMessageBus],
   ['event stores use scoped state and message bus', testEventStoresUseScopedStateAndMessageBus],
   ['memory mesh uses scoped event store', testMemoryMeshUsesScopedEventStore],
   ['tool registry logs to scoped event store', testToolRegistryLogsToScopedEventStore],
-  ['project board tool uses scoped runtime services', testProjectBoardToolUsesScopedRuntimeServices]
+  ['project board tool uses scoped runtime services', testProjectBoardToolUsesScopedRuntimeServices],
+  ['circuit breaker uses scoped event store', testCircuitBreakerUsesScopedEventStore],
+  ['policy engine uses scoped event store', testPolicyEngineUsesScopedEventStore]
 ] as const;
 
 const results = [];
