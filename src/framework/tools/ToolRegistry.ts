@@ -65,6 +65,7 @@ export class ToolRegistry {
                 const pluginRegistry = context.runtime?.pluginRegistry || globalPluginRegistry;
                 const escalationManager = context.runtime?.escalationManager || globalEscalationManager;
                 const eventStore = context.runtime?.eventStore || globalEventStore;
+                const iamInterceptor = context.runtime?.iamInterceptor || globalIAMInterceptor;
 
                 // Step 1: Execute High Risk Check
                 if (options.highRisk) {
@@ -80,7 +81,7 @@ export class ToolRegistry {
                 }
 
                 // Step 2: IAM Validation and Injection (Tenant Isolation boundary)
-                const securedArgs = globalIAMInterceptor.interceptAndInject({
+                const securedArgs = iamInterceptor.interceptAndInject({
                     tenantId,
                     agentId,
                     threadId,

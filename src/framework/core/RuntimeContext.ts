@@ -13,6 +13,7 @@ import { StateStore, globalStateStore } from '../orchestration/StateStore.ts';
 import { EscalationManager, globalEscalationManager } from '../governance/EscalationManager.ts';
 import { GenealogyTracker, globalGenealogy } from '../governance/GenealogyTracker.ts';
 import { ToolRegistry, globalToolRegistry } from '../tools/ToolRegistry.ts';
+import { IAMInterceptor, globalIAMInterceptor } from '../security/IAMInterceptor.ts';
 
 export interface RuntimeServices {
     tenantId: string;
@@ -30,6 +31,7 @@ export interface RuntimeServices {
     escalationManager: EscalationManager;
     genealogy: GenealogyTracker;
     toolRegistry: ToolRegistry;
+    iamInterceptor: IAMInterceptor;
 }
 
 export type RuntimeContextOptions = Partial<RuntimeServices> & {
@@ -71,6 +73,7 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         options.checkpointer ||
         options.stateStore ||
         options.toolRegistry ||
+        options.iamInterceptor ||
         options.escalationManager ||
         options.genealogy
     );
@@ -117,7 +120,8 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         stateStore: options.stateStore || globalStateStore,
         escalationManager,
         genealogy,
-        toolRegistry
+        toolRegistry,
+        iamInterceptor: options.iamInterceptor || globalIAMInterceptor
     };
 }
 

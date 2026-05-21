@@ -23,7 +23,7 @@ export class WBFTConsensus {
     private beta = 0.6;  // Trust weight factor
     private readonly similarityThreshold = 0.5;
     private readonly stopWords = new Set([
-        'a', 'an', 'and', 'are', 'as', 'at', 'be', 'best', 'by', 'choice',
+        'a', 'action', 'an', 'and', 'answer', 'are', 'as', 'at', 'be', 'best', 'by', 'choice',
         'for', 'from', 'great', 'in', 'is', 'it', 'of', 'on', 'or', 'the',
         'this', 'to', 'top', 'with', 'work', 'works'
     ]);
@@ -69,10 +69,6 @@ export class WBFTConsensus {
         let overlap = 0;
         for (const token of left) {
             if (right.has(token)) overlap++;
-        }
-
-        if (overlap < 2) {
-            return left.size === right.size && overlap === left.size ? 1 : 0;
         }
 
         return (2 * overlap) / (left.size + right.size);

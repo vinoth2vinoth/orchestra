@@ -15,7 +15,8 @@ export class MapReduceStrategy extends ParadigmStrategy {
         if (workers.length === 0) throw new ConfigurationError("MAP_REDUCE requires at least one WORKER agent");
 
         // 1. Plan Phase
-        const dag = await context.executeAgentTask(planner, task, context.threadId, context.blackboard);
+        const plannerResult = await context.executeAgentTask(planner, task, context.threadId, context.blackboard);
+        const dag = this.normalizePlannerResult(plannerResult);
         if (!dag || !dag.subtasks || !Array.isArray(dag.subtasks)) {
             throw new Error(`Invalid DAG structure returned by PLANNER`);
         }
@@ -89,5 +90,22 @@ export class MapReduceStrategy extends ParadigmStrategy {
         const id = `${subtask.id || subtask.description || ''}`;
         const hash = [...id].reduce((sum, char) => sum + char.charCodeAt(0), 0);
         return workers[hash % workers.length];
+    }
+
+    private normalizePlannerResult(plannerResult: any): any {
+        if (typeof plannerResult !== 'string') return plannerResult;
+        try {
+            return JSON.parse(plannerResult);
+        } catch {
+            const fenced = plannerResult.match(/```(?:json)?\s*([\s\S]*?)```/i);
+            if (fenced?.[1]) {
+                try {
+                    return JSON.parse(fenced[1]);
+                } catch {
+                    return null;
+                }
+            }
+            return null;
+        }
     }
 }

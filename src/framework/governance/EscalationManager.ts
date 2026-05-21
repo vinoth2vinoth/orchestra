@@ -17,13 +17,16 @@ interface PendingApproval {
     threadId: string;
     agentId: string;
     context: any;
+    expiresAt: number;
     resolve?: (result: { resolution: ApprovalResolution; feedback?: string }) => void;
     reject?: (error: Error) => void;
 }
 
 export class EscalationManager {
     private pendingApprovals = new Map<string, PendingApproval>();
+    private approvalTimers = new Map<string, NodeJS.Timeout>();
     private failureCounts: Map<string, number> = new Map();
+    private readonly pendingApprovalTtlMs = this.parsePositiveNumber(process.env.ORCHESTRA_APPROVAL_TTL_MS, 24 * 60 * 60 * 1000);
 
     constructor(
         private eventStore: EventStore = globalEventStore,
@@ -86,20 +89,38 @@ export class EscalationManager {
             payload: { actionDescription, context, approvalId }
         });
 
-        this.pendingApprovals.set(approvalId, { threadId, agentId, context });
+        const expiresAt = Date.now() + this.pendingApprovalTtlMs;
+        this.pendingApprovals.set(approvalId, { threadId, agentId, context, expiresAt });
+        const timer = setTimeout(() => {
+            this.pendingApprovals.delete(approvalId);
+            this.approvalTimers.delete(approvalId);
+            this.eventStore.append({
+                type: 'SYSTEM_HOOK',
+                sourceAgentId: 'GOVERNANCE',
+                threadId,
+                payload: { action: 'PENDING_APPROVAL_EXPIRED', approvalId, agentId }
+            });
+        }, this.pendingApprovalTtlMs);
+        timer.unref?.();
+        this.approvalTimers.set(approvalId, timer);
 
         // Throwing error to suspend execution durability
         throw new WorkflowSuspendedError(approvalId, context);
     }
 
     public getPendingApproval(approvalId: string): PendingApproval | undefined {
+        const pending = this.pendingApprovals.get(approvalId);
+        if (pending && pending.expiresAt <= Date.now()) {
+            this.clearPendingApproval(approvalId);
+            return undefined;
+        }
         return this.pendingApprovals.get(approvalId);
     }
 
     public async resolveApproval(approvalId: string, resolution: ApprovalResolution, feedback?: string) {
         const pending = this.pendingApprovals.get(approvalId);
         if (pending) {
-            this.pendingApprovals.delete(approvalId);
+            this.clearPendingApproval(approvalId);
             this.failureCounts.delete(`${pending.threadId}:${pending.agentId}`);
 
             await this.auditLog.log(pending.threadId, pending.agentId, 'HUMAN_INTERVENTION_RESOLVED', `Resolution: ${resolution}. Feedback: ${feedback || 'None'}`);
@@ -116,6 +137,18 @@ export class EscalationManager {
                 }
             });
         }
+    }
+
+    private clearPendingApproval(approvalId: string) {
+        this.pendingApprovals.delete(approvalId);
+        const timer = this.approvalTimers.get(approvalId);
+        if (timer) clearTimeout(timer);
+        this.approvalTimers.delete(approvalId);
+    }
+
+    private parsePositiveNumber(value: string | undefined, fallback: number): number {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
     }
 }
 

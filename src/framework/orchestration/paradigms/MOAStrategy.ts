@@ -1,5 +1,6 @@
 import { BaseAgent } from '../../agents/BaseAgent.ts';
 import { ParadigmStrategy, ParadigmContext } from './ParadigmStrategy.ts';
+import { ConfigurationError } from '../../core/ErrorHandler.ts';
 
 /**
  * MOA Paradigm: Parallel experts generate outputs, manager synthesizes.
@@ -29,7 +30,8 @@ export class MOAStrategy extends ParadigmStrategy {
             await context.checkpointer.saveCheckpoint(context.threadId, 'moa_layer1_complete', { layer1Results, blackboard: context.blackboard });
         }
 
-        const manager = agents.find(a => a.card.role === 'MANAGER') || agents[0];
+        const manager = agents.find(a => a.card.role === 'MANAGER');
+        if (!manager) throw new ConfigurationError("MOA requires a MANAGER agent for synthesis.");
         const synthesisPrompt = `
 Objective: ${task}
 Combined Agent Intelligence (Layer 1):

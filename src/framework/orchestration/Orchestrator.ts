@@ -345,8 +345,12 @@ BEHAVIORAL_MUTATION: [Specific correction for agent prompts]
 
 Otherwise, output "NO_LEARNING_DETECTED".`;
             
-            // Use the top-priority agent (usually Manager) to reflect
-            const reflector = agents[0];
+            const reflector = agents.find(a => a.card.role === 'MANAGER')
+                ?? agents.find(a => a.card.role === 'CRITIC')
+                ?? agents[0];
+            if (reflector.card.role === 'WORKER') {
+                console.warn(`[Orchestrator] Self-reflection is using WORKER ${reflector.card.id}; prefer MANAGER or CRITIC authority for workflow-wide learning.`);
+            }
             const policyConfig = { ...reflector.llmConfig, tier: 'POLICY' as const };
             const response = await this.runtime.circuitBreakers.execute(`reflection:${reflector.card.id}`, async () => {
                 return await ProviderRegistry.generate(policyConfig, systemPrompt, [{ role: 'user', content: reflectionTask }]);

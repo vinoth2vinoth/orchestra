@@ -12,6 +12,7 @@ export { QueueBroker } from './orchestration/QueueBroker.ts';
 export type { QueueBrokerOptions, QueueTaskRecord, QueueTaskStatus, TaskPayload, TaskResult } from './orchestration/QueueBroker.ts';
 export type { RuntimeContextOptions, RuntimeServices } from './core/RuntimeContext.ts';
 export { createRuntimeContext, globalRuntimeContext } from './core/RuntimeContext.ts';
+export { WorkerPool, globalWorkerPool } from './core/WorkerPool.ts';
 
 export { MemoryMesh } from './memory/MemoryMesh.ts';
 export type { MemoryMeshOptions } from './memory/MemoryMesh.ts';
@@ -35,6 +36,8 @@ export { AuditLog, globalAuditLog } from './governance/AuditLog.ts';
 export type { AuditEntry } from './governance/AuditLog.ts';
 export { Sanitizer } from './security/Sanitizer.ts';
 export { createApiAuthMiddleware } from './security/ApiAuth.ts';
+export { IAMInterceptor, globalIAMInterceptor } from './security/IAMInterceptor.ts';
+export type { SecurityPolicy, ToolInvocationContext } from './security/IAMInterceptor.ts';
 export { AgentFrameworkError, ConfigurationError } from './core/ErrorHandler.ts';
 export type { ErrorContext } from './core/ErrorHandler.ts';
 export { ProviderRegistry } from './llm/ProviderRegistry.ts';

@@ -87,7 +87,9 @@ export class Sanitizer {
             { id: 'OUTPUT_HIJACK', regex: /output exactly the following/i },
             { id: 'ESCAPE_GUARD', regex: /end of (untrusted|system|instructions)/i },
             { id: 'REASONING_LEAK', regex: /show your (internal )?reasoning/i },
-            { id: 'PROMPT_LEAK', regex: /repeat (your|the) (system |initial |original )?(prompt|instructions)/i }
+            { id: 'PROMPT_LEAK', regex: /repeat (your|the) (system |initial |original )?(prompt|instructions)/i },
+            { id: 'TURN_INJECTION', regex: /^(assistant|user|system)\s*:/im },
+            { id: 'DELIM_INJECTION', regex: /<\|im_(start|end|sep)\|>/i }
         ];
 
         for (const pattern of patterns) {

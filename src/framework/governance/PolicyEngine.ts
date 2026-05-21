@@ -4,7 +4,7 @@ export interface Policy {
     id: string;
     description: string;
     level: 'ADVISORY' | 'MANDATORY' | 'BLOCKING';
-    check: (task: any, agentId: string) => { allowed: boolean; reason?: string };
+    check: (task: any, agentId: string, threadId?: string) => { allowed: boolean; reason?: string };
 }
 
 /**
@@ -14,6 +14,7 @@ export interface Policy {
  */
 export class PolicyEngine {
     private policies: Policy[] = [];
+    private recentTaskFingerprints: Map<string, string[]> = new Map();
 
     constructor(private eventStore: EventStore = globalEventStore) {
         this.loadDefaultPolicies();
@@ -30,9 +31,17 @@ export class PolicyEngine {
     public evaluate(task: any, agentId: string, threadId: string): { status: 'GREEN' | 'YELLOW' | 'RED'; violations: string[] } {
         const violations: string[] = [];
         let finalStatus: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
+        const fingerprint = this.fingerprintTask(task);
+        const loopKey = `${threadId}:${agentId}`;
+        const recent = this.recentTaskFingerprints.get(loopKey) || [];
+
+        if (recent.filter(item => item === fingerprint).length >= 2) {
+            violations.push('ANTI_LOOPS: Identical task repeated 3+ times in recent thread history');
+            finalStatus = 'RED';
+        }
 
         for (const policy of this.policies) {
-            const result = policy.check(task, agentId);
+            const result = policy.check(task, agentId, threadId);
             if (!result.allowed) {
                 violations.push(`${policy.id}: ${result.reason}`);
                 
@@ -40,6 +49,8 @@ export class PolicyEngine {
                 else if (policy.level === 'MANDATORY' && finalStatus !== 'RED') finalStatus = 'YELLOW';
             }
         }
+
+        this.recentTaskFingerprints.set(loopKey, [...recent.slice(-9), fingerprint]);
 
         if (violations.length > 0) {
             this.eventStore.append({
@@ -51,6 +62,13 @@ export class PolicyEngine {
         }
 
         return { status: finalStatus, violations };
+    }
+
+    private fingerprintTask(task: any): string {
+        return JSON.stringify(task)
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
     }
 
     private loadDefaultPolicies() {

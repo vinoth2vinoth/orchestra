@@ -9,11 +9,11 @@ import { LLMAdapter, LLMResponse } from './LLMAdapter.ts';
 import { TelemetrySystem } from '../telemetry/TelemetrySystem.ts';
 import * as fs from 'fs';
 
-const logToFile = (msg: string) => {
+const logToFile = process.env.ORCHESTRA_DEBUG === 'true' ? (msg: string) => {
     try {
         fs.appendFileSync('server_logs.txt', `[${new Date().toISOString()}] ${msg}\n`);
     } catch (e) {}
-};
+} : (_msg: string) => {};
 
 export type ProviderType = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'unknown';
 export type ModelTier = 'POLICY' | 'EXECUTION' | 'UTILITY';

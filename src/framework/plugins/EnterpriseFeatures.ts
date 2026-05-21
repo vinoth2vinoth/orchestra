@@ -7,6 +7,7 @@ import crypto from 'crypto';
 export class DataLossPreventionPlugin implements AgenticPlugin {
     name = 'DataLossPreventionPlugin';
     version = '1.0.0';
+    failureMode = 'fail-closed' as const;
 
     private regexPatterns = [
         { name: 'EMAIL', pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g },
@@ -41,6 +42,7 @@ export class DataLossPreventionPlugin implements AgenticPlugin {
 export class TokenBudgetPlugin implements AgenticPlugin {
     name = 'TokenBudgetPlugin';
     version = '1.0.0';
+    failureMode = 'fail-closed' as const;
     private budgets = new Map<string, { limit: number, used: number }>();
 
     constructor(private globalLimit: number = 250000) {}
@@ -384,6 +386,7 @@ export class OpenTelemetryTracingPlugin implements AgenticPlugin {
 export class ZeroTrustRBACPlugin implements AgenticPlugin {
     name = 'ZeroTrustRBACPlugin';
     version = '1.0.0';
+    failureMode = 'fail-closed' as const;
 
     // Tool execution policies (Tool Name -> Required Role)
     private policies: Record<string, string[]> = {
@@ -524,6 +527,7 @@ export class ContextCompressionPlugin implements AgenticPlugin {
 export class JailbreakDefensePlugin implements AgenticPlugin {
     name = 'JailbreakDefensePlugin';
     version = '1.0.0';
+    failureMode = 'fail-closed' as const;
 
     private blacklist = [
         "ignore previous instructions",
@@ -609,6 +613,7 @@ export class SelfHealingRetryPlugin implements AgenticPlugin {
 export class TenantComputeRateLimiterPlugin implements AgenticPlugin {
     name = 'TenantComputeRateLimiterPlugin';
     version = '1.0.0';
+    failureMode = 'fail-closed' as const;
 
     // Simulated tenant RPM (Requests per minute) table
     private tenantLimits: Record<string, { rpm: number, calls: number, windowStart: number }> = {};
@@ -658,6 +663,7 @@ export class EventStreamerPlugin implements AgenticPlugin {
 export class HumanInTheLoopApprovalPlugin implements AgenticPlugin {
     name = 'HumanInTheLoopApprovalPlugin';
     version = '1.0.0';
+    failureMode = 'fail-closed' as const;
 
     private highRiskTools = ['refund_customer', 'mcp_postgres_query', 'execute_trade', 'send_email'];
 
@@ -752,6 +758,7 @@ export class AgentTrajectoryDistillationPlugin implements AgenticPlugin {
 export class SecretManagerPlugin implements AgenticPlugin {
     name = 'SecretManagerPlugin';
     version = '1.0.0';
+    failureMode = 'fail-closed' as const;
 
     // In a real framework, agents never see plain-text credentials in prompts or args.
     // They emit {{DB_PASSWORD_PROD}} and this plugin resolves it synchronously before tool invocation.
@@ -1040,6 +1047,7 @@ export class CircuitBreakerPlugin implements AgenticPlugin {
 export class StructuredOutputEnforcerPlugin implements AgenticPlugin {
     name = 'StructuredOutputEnforcerPlugin';
     version = '1.0.0';
+    failureMode = 'fail-closed' as const;
 
     async afterAgentExecute(agentId: string, task: any, result: any, threadId: string) {
         if (task && task.expectedSchema) {
@@ -1107,6 +1115,7 @@ export class AutoPromptOptimizerPlugin implements AgenticPlugin {
 export class SLAEnforcerPlugin implements AgenticPlugin {
     name = 'SLAEnforcerPlugin';
     version = '1.0.0';
+    failureMode = 'fail-closed' as const;
     
     private maxExecutionMs = 45000; // 45 seconds SLA
 

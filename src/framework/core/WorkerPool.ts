@@ -7,17 +7,19 @@ import { globalEventStore } from './EventStore.ts';
 export class WorkerPool {
     private maxConcurrency: number;
     private activeCount: number = 0;
-    private queue: (() => void)[] = [];
+    private queue: Array<() => void> = [];
+    private slotTimeoutMs: number;
 
-    constructor(maxConcurrency: number = 10) {
+    constructor(maxConcurrency: number = 10, slotTimeoutMs: number = 120000) {
         this.maxConcurrency = maxConcurrency;
+        this.slotTimeoutMs = slotTimeoutMs;
     }
 
     /**
      * Executes a task with a guaranteed slot in the pool.
      */
     public async run<T>(task: () => Promise<T>, agentId: string, threadId: string): Promise<T> {
-        await this.acquireSlot();
+        await this.acquireSlot(this.slotTimeoutMs, agentId, threadId);
         
         try {
             return await task();
@@ -26,14 +28,32 @@ export class WorkerPool {
         }
     }
 
-    private async acquireSlot(): Promise<void> {
+    private async acquireSlot(timeoutMs: number, agentId: string, threadId: string): Promise<void> {
         if (this.activeCount < this.maxConcurrency) {
             this.activeCount++;
             return Promise.resolve();
         }
 
-        return new Promise((resolve) => {
-            this.queue.push(resolve);
+        return new Promise((resolve, reject) => {
+            let releaseQueuedSlot!: () => void;
+            const timer = setTimeout(() => {
+                const idx = this.queue.indexOf(releaseQueuedSlot);
+                if (idx !== -1) this.queue.splice(idx, 1);
+                globalEventStore.append({
+                    type: 'SYSTEM_HOOK',
+                    sourceAgentId: 'WORKER_POOL',
+                    threadId,
+                    payload: { action: 'SLOT_TIMEOUT', agentId, timeoutMs }
+                });
+                reject(new Error(`WorkerPool slot timed out after ${timeoutMs}ms for agent ${agentId}`));
+            }, timeoutMs);
+
+            releaseQueuedSlot = () => {
+                clearTimeout(timer);
+                resolve();
+            };
+
+            this.queue.push(releaseQueuedSlot);
         });
     }
 

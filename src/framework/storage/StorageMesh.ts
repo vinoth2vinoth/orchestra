@@ -351,7 +351,7 @@ export class StorageMesh {
                 await fs.promises.appendFile(safePath, content);
             }
         } finally {
-            this.activeWrites.delete(relativePath);
+            setTimeout(() => this.activeWrites.delete(relativePath), 1000);
         }
     }
 }

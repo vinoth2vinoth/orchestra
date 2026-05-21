@@ -36,7 +36,7 @@
     "lint": "tsc --noEmit",
     "test:core": "tsx src/framework/testing/run_tests.ts",
     "test:security": "tsx workspace/security_correctness_regression_tests.ts && tsx workspace/tool_mode_regression_tests.ts && tsx workspace/document_management_regression_tests.ts",
-    "test:architecture": "tsx workspace/architecture_queue_regression_tests.ts && tsx workspace/runtime_context_regression_tests.ts && tsx workspace/infrastructure_isolation_regression_tests.ts && tsx workspace/memory_persistence_regression_tests.ts && tsx workspace/audit_log_regression_tests.ts && tsx workspace/plugin_governance_regression_tests.ts && tsx workspace/claude_audit_regression_tests.ts && tsx workspace/deep_audit_v3_regression_tests.ts && tsx workspace/autonomous_daemon_regression_tests.ts",
+    "test:architecture": "tsx workspace/architecture_queue_regression_tests.ts && tsx workspace/runtime_context_regression_tests.ts && tsx workspace/infrastructure_isolation_regression_tests.ts && tsx workspace/memory_persistence_regression_tests.ts && tsx workspace/audit_log_regression_tests.ts && tsx workspace/plugin_governance_regression_tests.ts && tsx workspace/claude_audit_regression_tests.ts && tsx workspace/deep_audit_v3_regression_tests.ts && tsx workspace/fresh_audit_regression_tests.ts && tsx workspace/autonomous_daemon_regression_tests.ts",
     "test:reliability": "tsx workspace/reliability_gauntlet_tests.ts",
     "test:durability": "tsx workspace/durability_restart_tests.ts",
     "test:state-backend": "tsx workspace/state_backend_durability_tests.ts",
