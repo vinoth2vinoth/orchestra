@@ -389,7 +389,6 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
         }
 
         await this.runtime.escalationManager.resolveApproval(approvalId, resolution, feedback);
-        await this.runtime.stateStore.deleteState(approvalId);
         await this.runtime.pluginRegistry.emitOnWorkflowResume(state.threadId, state);
         
         this.runtime.eventStore.append({
@@ -412,7 +411,9 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
             blackboard: state.blackboard
         };
 
-        return this.executeWorkflow(resumedTask, resumedConfig, state.threadId);
+        const result = await this.executeWorkflow(resumedTask, resumedConfig, state.threadId);
+        await this.runtime.stateStore.deleteState(approvalId);
+        return result;
     }
     
     private async executeAgentTask(agent: BaseAgent, task: any, threadId: string, paradigm: string, blackboard?: Record<string, any>, parentSpan?: any, enableLearning: boolean = false, runtime: RuntimeServices = this.runtime): Promise<any> {

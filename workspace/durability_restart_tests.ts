@@ -1,9 +1,77 @@
 import {
+  BaseAgent,
+  MemoryMesh,
+  Orchestrator,
   QueueBroker,
   type QueueTaskRecord,
   type TaskPayload,
   type TaskResult
 } from '../src/framework/index.ts';
+import { StateStore } from '../src/framework/orchestration/StateStore.ts';
+import { WorkflowSuspendedError } from '../src/framework/orchestration/WorkflowSuspendedError.ts';
+
+class DurableSuspendingAgent extends BaseAgent {
+  constructor(id: string, private readonly approvalId: string) {
+    super(
+      id,
+      `Suspends workflow for ${id}.`,
+      'MANAGER',
+      new MemoryMesh(),
+      { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      id
+    );
+  }
+
+  async execute(): Promise<any> {
+    throw new WorkflowSuspendedError(this.approvalId, { reason: 'durability-restart-test' });
+  }
+}
+
+class DurableResultAgent extends BaseAgent {
+  constructor(id: string, private readonly answer: any) {
+    super(
+      id,
+      `Completes workflow for ${id}.`,
+      'MANAGER',
+      new MemoryMesh(),
+      { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      id
+    );
+  }
+
+  async execute(task: any): Promise<any> {
+    return { answer: this.answer, task };
+  }
+}
+
+class DurableFailingAgent extends BaseAgent {
+  constructor(id: string) {
+    super(
+      id,
+      `Fails workflow for ${id}.`,
+      'MANAGER',
+      new MemoryMesh(),
+      { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      id
+    );
+  }
+
+  async execute(): Promise<any> {
+    throw new Error('resume failed after restart');
+  }
+}
 
 function assert(condition: unknown, message: string) {
   if (!condition) throw new Error(message);
@@ -178,10 +246,72 @@ async function testStaleLeaseResultCannotWinCurrentLease() {
   }
 }
 
+async function suspendWorkflowForRestart(stateStore: StateStore, approvalId: string, threadId: string) {
+  const result = await new Orchestrator({ stateStore }).executeWorkflow(
+    'requires human approval before continuing',
+    {
+      paradigm: 'HIERARCHICAL',
+      agents: [new DurableSuspendingAgent(`suspender-${approvalId}`, approvalId)],
+      maxRetries: 0
+    },
+    threadId
+  );
+
+  assert(result.status === 'SUSPENDED' && result.approvalId === approvalId, `Expected suspended workflow, got ${JSON.stringify(result)}`);
+  const saved = await stateStore.getState(approvalId);
+  assert(saved?.threadId === threadId, `Expected saved suspended state for ${approvalId}, got ${JSON.stringify(saved)}`);
+}
+
+async function testFreshOrchestratorResumesSuspendedWorkflow() {
+  const stateStore = new StateStore();
+  const approvalId = `restart-approval-${Date.now()}`;
+  const threadId = `DURABILITY_APPROVAL_${Date.now()}`;
+
+  await suspendWorkflowForRestart(stateStore, approvalId, threadId);
+
+  const result = await new Orchestrator({ stateStore }).resumeWorkflow(
+    approvalId,
+    'APPROVED',
+    'continue after restart',
+    [new DurableResultAgent('resume-completer', 'resumed-after-restart')]
+  );
+
+  assert(result.answer === 'resumed-after-restart', `Expected resumed result, got ${JSON.stringify(result)}`);
+  assert(typeof result.task === 'string' && result.task.includes('continue after restart'), `Expected human feedback in resumed task, got ${JSON.stringify(result)}`);
+  const saved = await stateStore.getState(approvalId);
+  assert(!saved, `Successful resume should delete approval state, got ${JSON.stringify(saved)}`);
+}
+
+async function testFailedResumeKeepsSuspendedState() {
+  const stateStore = new StateStore();
+  const approvalId = `failed-resume-approval-${Date.now()}`;
+  const threadId = `DURABILITY_FAILED_RESUME_${Date.now()}`;
+
+  await suspendWorkflowForRestart(stateStore, approvalId, threadId);
+
+  let failed = false;
+  try {
+    await new Orchestrator({ stateStore }).resumeWorkflow(
+      approvalId,
+      'APPROVED',
+      undefined,
+      [new DurableFailingAgent('resume-failer')]
+    );
+  } catch {
+    failed = true;
+  }
+
+  assert(failed, 'Expected resumed workflow to fail');
+  const saved = await stateStore.getState(approvalId);
+  assert(saved?.threadId === threadId, `Failed resume must keep approval state for retry, got ${JSON.stringify(saved)}`);
+}
+
 const tests = [
   ['duplicate publish is idempotent while in flight', testDuplicatePublishIsIdempotentWhileInFlight],
   ['fresh broker recovers expired lease after restart', testFreshBrokerRecoversExpiredLeaseAfterRestart],
-  ['stale lease result cannot win current lease', testStaleLeaseResultCannotWinCurrentLease]
+  ['stale lease result cannot win current lease', testStaleLeaseResultCannotWinCurrentLease],
+  ['fresh orchestrator resumes suspended workflow', testFreshOrchestratorResumesSuspendedWorkflow],
+  ['failed resume keeps suspended state', testFailedResumeKeepsSuspendedState]
 ] as const;
 
 const results: Array<{ name: string; ok: boolean; ms: number; error?: string; stack?: string }> = [];
