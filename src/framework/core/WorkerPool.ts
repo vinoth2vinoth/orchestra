@@ -1,4 +1,9 @@
-import { globalEventStore } from './EventStore.ts';
+import { EventStore, globalEventStore } from './EventStore.ts';
+
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
 
 /**
  * WorkerPool manages execution slots to prevent resource exhaustion (Dimension 04).
@@ -10,7 +15,11 @@ export class WorkerPool {
     private queue: Array<() => void> = [];
     private slotTimeoutMs: number;
 
-    constructor(maxConcurrency: number = 10, slotTimeoutMs: number = 120000) {
+    constructor(
+        maxConcurrency: number = 10,
+        slotTimeoutMs: number = parsePositiveInt(process.env.ORCHESTRA_WORKER_SLOT_TIMEOUT_MS, 120000),
+        private eventStore: EventStore = globalEventStore
+    ) {
         this.maxConcurrency = maxConcurrency;
         this.slotTimeoutMs = slotTimeoutMs;
     }
@@ -39,7 +48,7 @@ export class WorkerPool {
             const timer = setTimeout(() => {
                 const idx = this.queue.indexOf(releaseQueuedSlot);
                 if (idx !== -1) this.queue.splice(idx, 1);
-                globalEventStore.append({
+                this.eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: 'WORKER_POOL',
                     threadId,

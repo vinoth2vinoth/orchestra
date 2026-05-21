@@ -58,6 +58,7 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
             })
             : globalEventStore
     );
+    const hasScopedEventStore = Boolean(options.eventStore || options.stateAdapter);
     const toolRegistry = options.toolRegistry || globalToolRegistry;
     const auditLog = options.auditLog || globalAuditLog;
     const needsScopedRegistry = Boolean(
@@ -78,18 +79,27 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         options.genealogy
     );
     const escalationManager = options.escalationManager || (
-        options.eventStore || options.auditLog
+        hasScopedEventStore || options.auditLog
             ? new EscalationManager(eventStore, auditLog)
             : globalEscalationManager
     );
     const genealogy = options.genealogy || (
-        options.eventStore ? new GenealogyTracker(eventStore) : globalGenealogy
+        hasScopedEventStore ? new GenealogyTracker(eventStore) : globalGenealogy
     );
     const circuitBreakers = options.circuitBreakers || (
-        options.eventStore ? new CircuitBreakerRegistry(eventStore) : globalCircuitBreakers
+        hasScopedEventStore ? new CircuitBreakerRegistry(eventStore) : globalCircuitBreakers
     );
     const policyEngine = options.policyEngine || (
-        options.eventStore ? new PolicyEngine(eventStore) : globalPolicyEngine
+        hasScopedEventStore ? new PolicyEngine(eventStore) : globalPolicyEngine
+    );
+    const workerPool = options.workerPool || (
+        options.eventStore || options.stateAdapter
+            ? new WorkerPool(
+                process.env.MAX_CONCURRENCY ? parseInt(process.env.MAX_CONCURRENCY) : 8,
+                undefined,
+                eventStore
+            )
+            : globalWorkerPool
     );
     const agentRegistry = options.agentRegistry || (
         needsScopedRegistry
@@ -111,7 +121,7 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
                 })
                 : globalQueueBroker
         ),
-        workerPool: options.workerPool || globalWorkerPool,
+        workerPool,
         policyEngine,
         auditLog,
         agentRegistry,

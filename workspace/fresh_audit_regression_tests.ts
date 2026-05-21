@@ -1,5 +1,6 @@
 import {
   BaseAgent,
+  createRuntimeContext,
   IAMInterceptor,
   MemoryMesh,
   Orchestrator,
@@ -184,6 +185,72 @@ async function testWorkerPoolAcquireTimeout() {
   assert(timedOut, 'Expected second WorkerPool task to time out while waiting for a slot');
 }
 
+async function testRuntimeWorkerPoolLogsToScopedEventStore() {
+  const previousTimeout = process.env.ORCHESTRA_WORKER_SLOT_TIMEOUT_MS;
+  const previousMaxConcurrency = process.env.MAX_CONCURRENCY;
+  process.env.ORCHESTRA_WORKER_SLOT_TIMEOUT_MS = '25';
+  process.env.MAX_CONCURRENCY = '1';
+  const runtime = createRuntimeContext({
+    tenantId: `worker-pool-scope-${crypto.randomUUID()}`,
+    stateAdapter: new MemoryStateAdapter()
+  });
+
+  try {
+    const first = runtime.workerPool.run(async () => {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return 'first';
+    }, 'agent-a', 'thread-a');
+
+    let timedOut = false;
+    try {
+      await runtime.workerPool.run(async () => 'second', 'agent-b', 'thread-b');
+    } catch (err: any) {
+      timedOut = err.message.includes('WorkerPool slot timed out');
+    }
+
+    await first;
+    assert(timedOut, 'Expected scoped runtime WorkerPool task to time out');
+    const timeoutEvent = runtime.eventStore.getLogs().find(event =>
+      event.sourceAgentId === 'WORKER_POOL' &&
+      event.threadId === 'thread-b' &&
+      event.payload?.action === 'SLOT_TIMEOUT'
+    );
+    assert(timeoutEvent, 'Expected WorkerPool timeout event in scoped runtime event store');
+  } finally {
+    if (previousTimeout === undefined) delete process.env.ORCHESTRA_WORKER_SLOT_TIMEOUT_MS;
+    else process.env.ORCHESTRA_WORKER_SLOT_TIMEOUT_MS = previousTimeout;
+    if (previousMaxConcurrency === undefined) delete process.env.MAX_CONCURRENCY;
+    else process.env.MAX_CONCURRENCY = previousMaxConcurrency;
+    runtime.eventStore.dispose();
+    runtime.queueBroker.dispose();
+  }
+}
+
+async function testRuntimeStateBackendScopesPolicySignals() {
+  const runtime = createRuntimeContext({
+    tenantId: `policy-scope-${crypto.randomUUID()}`,
+    stateAdapter: new MemoryStateAdapter()
+  });
+
+  try {
+    const threadId = `FRESH_AUDIT_POLICY_SCOPE_${Date.now()}`;
+    runtime.policyEngine.evaluate('repeat scoped task', 'agent-a', threadId);
+    runtime.policyEngine.evaluate('repeat scoped task', 'agent-a', threadId);
+    const third = runtime.policyEngine.evaluate('repeat scoped task', 'agent-a', threadId);
+    assert(third.status === 'RED', `Expected scoped policy engine to block repeated task, got ${third.status}`);
+
+    const violationEvent = runtime.eventStore.getLogs().find(event =>
+      event.sourceAgentId === 'GOVERNANCE' &&
+      event.threadId === threadId &&
+      event.payload?.violations?.some((violation: string) => violation.includes('ANTI_LOOPS'))
+    );
+    assert(violationEvent, 'Expected policy violation to be written to the scoped runtime event store');
+  } finally {
+    runtime.eventStore.dispose();
+    runtime.queueBroker.dispose();
+  }
+}
+
 async function testToolRegistryUsesScopedIamInterceptor() {
   const toolRegistry = new ToolRegistry();
   toolRegistry.register(
@@ -359,6 +426,8 @@ const tests = [
   ['before agent rejects unsafe object keys', testBeforeAgentRejectsUnsafeObjectKeys],
   ['before agent handles circular task objects', testBeforeAgentHandlesCircularTaskObjects],
   ['worker pool acquire timeout', testWorkerPoolAcquireTimeout],
+  ['runtime worker pool logs to scoped event store', testRuntimeWorkerPoolLogsToScopedEventStore],
+  ['runtime state backend scopes policy signals', testRuntimeStateBackendScopesPolicySignals],
   ['tool registry uses scoped IAM interceptor', testToolRegistryUsesScopedIamInterceptor],
   ['map-reduce parses JSON planner string', testMapReduceParsesJsonPlannerString],
   ['WBFT clusters short unanimous answers', testWbftClustersShortUnanimousAnswers],
