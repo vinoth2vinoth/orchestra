@@ -15,8 +15,8 @@ The demo below uses a fake code-change review so you can see the idea without co
 ## 1. Install
 
 ```bash
-git clone https://github.com/vinoth2vinoth/orchestra-multi-agent-ai-framework.git
-cd orchestra-multi-agent-ai-framework
+git clone https://github.com/vinoth2vinoth/Orchestra.git
+cd Orchestra
 npm install
 ```
 

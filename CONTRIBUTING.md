@@ -1,6 +1,6 @@
 # Contributing to Orchestra
 
-First off, thank you for considering contributing to Orchestra! It's people like you that make Orchestra such a powerful tool for building enterprise-grade AI agent swarms.
+First off, thank you for considering contributing to Orchestra. The project is focused on reliable, observable multi-AI-Agent workflows.
 
 ## Table of Contents
 
@@ -28,7 +28,7 @@ We use GitHub issues to track public bugs. Report a bug by opening a new issue u
 
 ## How to Suggest Enhancements
 
-Enhancements are highly welcomed and tracked as GitHub issues. Use the **Feature Request** or **Agent Persona Idea** templates. 
+Enhancements are highly welcomed and tracked as GitHub issues. Use the **Feature Request** or **Architecture Proposal** templates.
 - Provide a compelling reason why the feature should be included.
 - Consider what alternatives exist.
 - Keep the scope as focused as possible.
@@ -37,8 +37,8 @@ Enhancements are highly welcomed and tracked as GitHub issues. Use the **Feature
 
 1. **Fork and Clone** the repository:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/orchestra.git
-   cd orchestra
+   git clone https://github.com/YOUR_USERNAME/Orchestra.git
+   cd Orchestra
    ```
 2. **Install Dependencies**:
    We strongly recommend using Node.js v20.x or higher to fully support our internal threading bounds.
@@ -60,10 +60,10 @@ Enhancements are highly welcomed and tracked as GitHub issues. Use the **Feature
    ```bash
    npm run test
    ```
-4. **Format and Lint**: Ensure your code meets our automated style guidelines.
+4. **Lint and validate**: Ensure your code meets the current type and regression checks.
    ```bash
    npm run lint
-   npm run format
+   npm run check
    ```
 
 ## Pull Request Guidelines

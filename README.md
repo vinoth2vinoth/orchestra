@@ -7,7 +7,7 @@
 ### A TypeScript framework for multi-agent AI orchestration, governance, memory, and observable LLM workflows.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/vinoth2vinoth/orchestra-multi-agent-ai-framework/actions/workflows/ci.yml/badge.svg)](https://github.com/vinoth2vinoth/orchestra-multi-agent-ai-framework/actions/workflows/ci.yml)
+[![CI](https://github.com/vinoth2vinoth/Orchestra/actions/workflows/ci.yml/badge.svg)](https://github.com/vinoth2vinoth/Orchestra/actions/workflows/ci.yml)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
 [![Status](https://img.shields.io/badge/status-early%20development-yellow.svg)](#project-status)
@@ -163,8 +163,8 @@ graph TB
 ### Install
 
 ```bash
-git clone https://github.com/vinoth2vinoth/orchestra-multi-agent-ai-framework.git
-cd orchestra-multi-agent-ai-framework
+git clone https://github.com/vinoth2vinoth/Orchestra.git
+cd Orchestra
 npm install
 cp .env.example .env
 ```
@@ -214,8 +214,10 @@ npm run test:durability
 npm run test:state-backend
 npm run test:sdk
 npm run test:reference
+npm run test:reliability-demo
 npm run demo
 npm run example:code-review
+npm run demo:reliability
 npm run examples:check
 npm run build
 npm audit --audit-level=low
@@ -315,6 +317,15 @@ The [`examples/`](examples) directory contains small scenario files for swarm or
 npm run demo
 npm run example:code-review
 npm run test:reference
+```
+
+### Reliability Recovery Demo
+
+[`examples/reliability-recovery-demo`](examples/reliability-recovery-demo) is a deterministic recovery demo. It runs several AI Agents through the orchestrator and queue path, intentionally fails one AI Agent once, proves the retry succeeds, and verifies that a stale late result cannot overwrite the accepted result.
+
+```bash
+npm run demo:reliability
+npm run test:reliability-demo
 ```
 
 These examples are typechecked by `npm run examples:check` so API drift is caught before merge. Prefer `npm run test` and `npm run check` when validating framework behavior.

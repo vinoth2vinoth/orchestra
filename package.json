@@ -6,12 +6,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/vinoth2vinoth/orchestra-multi-agent-ai-framework.git"
+    "url": "git+https://github.com/vinoth2vinoth/Orchestra.git"
   },
   "bugs": {
-    "url": "https://github.com/vinoth2vinoth/orchestra-multi-agent-ai-framework/issues"
+    "url": "https://github.com/vinoth2vinoth/Orchestra/issues"
   },
-  "homepage": "https://github.com/vinoth2vinoth/orchestra-multi-agent-ai-framework#readme",
+  "homepage": "https://github.com/vinoth2vinoth/Orchestra#readme",
   "keywords": [
     "ai-agents",
     "multi-agent",
@@ -43,10 +43,12 @@
     "test:sdk": "tsx workspace/sdk_contract_tests.ts",
     "test:reference": "tsx workspace/reference_code_review_tests.ts",
     "test:projects": "tsx workspace/audit_project_submission_tests.ts",
-    "test": "npm run test:core && npm run test:security && npm run test:architecture && npm run test:reliability && npm run test:durability && npm run test:sdk && npm run test:reference && npm run test:projects",
+    "test": "npm run test:core && npm run test:security && npm run test:architecture && npm run test:reliability && npm run test:durability && npm run test:sdk && npm run test:reference && npm run test:reliability-demo && npm run test:projects",
     "demo": "npm run example:code-review",
     "example:code-review": "tsx examples/reference-code-review/run.ts",
+    "demo:reliability": "tsx examples/reliability-recovery-demo/run.ts",
     "examples:check": "tsc -p tsconfig.examples.json --noEmit",
+    "test:reliability-demo": "tsx workspace/reliability_recovery_demo_tests.ts",
     "check:no-runtime-artifacts": "node -e \"const {execSync}=require('node:child_process'); const files=execSync('git ls-files', {encoding:'utf8'}).split(/\\r?\\n/).filter(Boolean).filter(f => f.startsWith('orchestra_workspace/.orchestra/') || f.endsWith('.enc')); if (files.length) { console.error('Runtime artifacts tracked by git:\\n' + files.join('\\n')); process.exit(1); }\"",
     "check": "npm run lint && npm run check:no-runtime-artifacts && npm run test && npm run examples:check && npm run build"
   },
