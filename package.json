@@ -1,7 +1,7 @@
 {
   "name": "orchestra-multi-agent-ai-framework",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "TypeScript framework for multi-agent AI orchestration, governance, memory, and observable LLM workflows.",
   "license": "MIT",
   "repository": {
