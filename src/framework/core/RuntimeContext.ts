@@ -35,8 +35,22 @@ export type RuntimeContextOptions = Partial<RuntimeServices> & {
     tenantId?: string;
 };
 
+function scopedKey(base: string, tenantId: string): string {
+    return tenantId === 'GLOBAL' ? base : `${base}:${tenantId}`;
+}
+
 export function createRuntimeContext(options: RuntimeContextOptions = {}): RuntimeServices {
-    const eventStore = options.eventStore || globalEventStore;
+    const tenantId = options.tenantId || 'GLOBAL';
+    const stateAdapter = options.stateAdapter || globalStateAdapter;
+    const eventStore = options.eventStore || (
+        options.stateAdapter
+            ? new EventStore({
+                stateAdapter,
+                historyKey: scopedKey('framework_events', tenantId),
+                topic: scopedKey('FRAMEWORK_EVENTS', tenantId)
+            })
+            : globalEventStore
+    );
     const toolRegistry = options.toolRegistry || globalToolRegistry;
     const auditLog = options.auditLog || globalAuditLog;
     const needsScopedRegistry = Boolean(
@@ -76,11 +90,18 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
     );
 
     return {
-        tenantId: options.tenantId || 'GLOBAL',
-        stateAdapter: options.stateAdapter || globalStateAdapter,
+        tenantId,
+        stateAdapter,
         pluginRegistry: options.pluginRegistry || globalPluginRegistry,
         circuitBreakers,
-        queueBroker: options.queueBroker || globalQueueBroker,
+        queueBroker: options.queueBroker || (
+            options.stateAdapter
+                ? new QueueBroker({
+                    stateAdapter,
+                    namespace: scopedKey('queue', tenantId)
+                })
+                : globalQueueBroker
+        ),
         workerPool: options.workerPool || globalWorkerPool,
         policyEngine,
         auditLog,

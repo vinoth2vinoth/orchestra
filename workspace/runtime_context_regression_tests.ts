@@ -10,6 +10,7 @@ import type { CheckpointData } from '../src/framework/orchestration/Checkpointer
 import type { FrameworkEvent } from '../src/framework/core/types.ts';
 import { AgentRegistry } from '../src/framework/agents/AgentRegistry.ts';
 import { globalIAMInterceptor } from '../src/framework/security/IAMInterceptor.ts';
+import { createRuntimeContext, EventStore, MemoryStateAdapter } from '../src/framework/index.ts';
 import { z } from 'zod';
 
 class EchoManagerAgent extends BaseAgent {
@@ -149,6 +150,15 @@ class InMemoryCheckpointer {
   }
 }
 
+async function waitForCondition(condition: () => Promise<boolean> | boolean, timeoutMs = 1000): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (await condition()) return;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+  throw new Error(`Condition was not met within ${timeoutMs}ms`);
+}
+
 async function testWorkflowInjectsRuntimeIntoAgents() {
   const eventStore = new RecordingEventStore();
   const agent = new RuntimeMutationAgent(
@@ -225,6 +235,71 @@ async function testManagerUsesScopedAgentRegistryForToolGrant() {
   }
   if (!worker.card.capabilities.includes('tool:discovery_index')) {
     throw new Error(`Scoped registry did not grant tool to worker: ${JSON.stringify(worker.card.capabilities)}`);
+  }
+}
+
+async function testRuntimeStateAdapterScopesDurableServices() {
+  const tenantId = `runtime-durable-${Date.now()}`;
+  const threadId = `RUNTIME_DURABLE_${Date.now()}`;
+  const taskId = `runtime-durable-task-${Date.now()}`;
+  const marker = `marker-${crypto.randomUUID()}`;
+  const adapter = new MemoryStateAdapter();
+  const runtime = createRuntimeContext({ tenantId, stateAdapter: adapter });
+
+  try {
+    runtime.eventStore.append({
+      type: 'SYSTEM_HOOK',
+      sourceAgentId: 'RUNTIME_DURABLE_TEST',
+      threadId,
+      payload: { marker }
+    });
+
+    await waitForCondition(async () => {
+      const persisted = await adapter.getRange(`framework_events:${tenantId}`, 0, -1);
+      return persisted.some(event => event.payload?.marker === marker);
+    });
+
+    const restoredStore = await EventStore.create({
+      stateAdapter: adapter,
+      historyKey: `framework_events:${tenantId}`,
+      topic: `FRAMEWORK_EVENTS:${tenantId}:restored`
+    });
+    const restoredEvents = restoredStore.getEventsByThread(threadId);
+    if (!restoredEvents.some(event => event.payload?.marker === marker)) {
+      throw new Error(`Runtime event store did not persist through the provided state adapter: ${JSON.stringify(restoredEvents)}`);
+    }
+    restoredStore.dispose();
+
+    runtime.queueBroker.subscribeToAllTasks(async payload => {
+      await runtime.queueBroker.publishResult({
+        taskId: payload.taskId,
+        status: 'success',
+        result: { handledByScopedQueue: true },
+        leaseId: payload.leaseId
+      });
+    }, 'runtime-durable-worker');
+
+    const result = await runtime.queueBroker.publish({
+      taskId,
+      threadId,
+      agentId: 'runtime-durable-agent',
+      agentConfig: {},
+      payload: { marker },
+      blackboard: {},
+      maxAttempts: 2
+    });
+
+    if (result.status !== 'success' || result.result?.handledByScopedQueue !== true) {
+      throw new Error(`Scoped queue did not complete task: ${JSON.stringify(result)}`);
+    }
+
+    const queueRecord = await adapter.get<any>(`queue:${tenantId}:task:${taskId}`);
+    if (queueRecord?.status !== 'SUCCEEDED') {
+      throw new Error(`Runtime queue did not persist through the provided state adapter: ${JSON.stringify(queueRecord)}`);
+    }
+  } finally {
+    runtime.eventStore.dispose();
+    runtime.queueBroker.dispose();
   }
 }
 
@@ -528,6 +603,7 @@ async function testConcurrentWorkflowsDoNotMutateSharedTaskObject() {
 
 const tests = [
   ['workflow injects runtime into agents', testWorkflowInjectsRuntimeIntoAgents],
+  ['runtime state adapter scopes durable services', testRuntimeStateAdapterScopesDurableServices],
   ['manager uses scoped agent registry for tool grant', testManagerUsesScopedAgentRegistryForToolGrant],
   ['runtime plugin and tenant scope', testRuntimePluginAndTenantScope],
   ['tool execution uses scoped plugin registry', testToolExecutionUsesScopedPluginRegistry],
