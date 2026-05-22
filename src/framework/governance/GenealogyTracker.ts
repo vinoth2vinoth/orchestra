@@ -23,7 +23,7 @@ export class GenealogyTracker {
 
     public recordLineage(agentId: string, input: string, output: string, parentIds: string[] = []): string {
         const id = crypto.randomUUID();
-        const outputHash = this.hashString(output);
+        const outputHash = this.hashString(output, agentId);
         
         const node: ProvenanceNode = {
             id,
@@ -61,8 +61,11 @@ export class GenealogyTracker {
         return Array.from(new Set(cascade));
     }
 
-    private hashString(str: string): string {
-        return createHash('sha256').update(str).digest('hex').slice(0, 16);
+    private hashString(str: string, agentId?: string): string {
+        return createHash('sha256')
+            .update(`${agentId || 'UNKNOWN_AGENT'}\0${str}`)
+            .digest('hex')
+            .slice(0, 16);
     }
 }
 

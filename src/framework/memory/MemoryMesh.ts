@@ -20,6 +20,14 @@ export interface MemoryMeshOptions {
     eventStore?: EventStore;
 }
 
+export interface MemoryCheckpoint {
+    memories: MemoryEntry[];
+    coldMemories?: MemoryEntry[];
+    coreMemories?: Array<[string, CoreMemoryState]>;
+    graphEdges?: Array<{ source: string, target: string, relation: string, weight: number, tenantId?: string }>;
+    graphNodes?: Array<[string, { label: string, properties: Record<string, any>, tenantId?: string }]>;
+}
+
 /**
  * MemoryMesh implements the 4-tier CoALA-inspired memory architecture (Dimension 07).
  * Now augmented with REAL Vector Search capabilities using TF-IDF (Free & local).
@@ -90,6 +98,43 @@ export class MemoryMesh {
             threadId: contextId,
             payload: { action: 'CORE_MEMORY_UPDATE', block, content: content.substring(0, 100), append }
         });
+    }
+
+    public exportForCheckpoint(): MemoryCheckpoint {
+        return {
+            memories: this.cloneForCheckpoint(this.memories.filter(Boolean)),
+            coldMemories: this.cloneForCheckpoint(this.coldMemories.filter(Boolean)),
+            coreMemories: this.cloneForCheckpoint(Array.from(this.coreMemories.entries())),
+            graphEdges: this.cloneForCheckpoint(this.graphEdges),
+            graphNodes: this.cloneForCheckpoint(Array.from(this.graphNodes.entries()))
+        };
+    }
+
+    public importFromCheckpoint(checkpoint?: MemoryCheckpoint) {
+        if (!checkpoint) return;
+
+        this.memories = this.cloneForCheckpoint((checkpoint.memories || []) as VectorMemoryEntry[])
+            .map(memory => this.restoreTenant(memory));
+        this.coldMemories = this.cloneForCheckpoint((checkpoint.coldMemories || []) as VectorMemoryEntry[])
+            .map(memory => this.restoreTenant(memory));
+        this.coreMemories = new Map(this.cloneForCheckpoint(checkpoint.coreMemories || []));
+        this.graphEdges = this.cloneForCheckpoint(checkpoint.graphEdges || []);
+        this.graphNodes = new Map(this.cloneForCheckpoint(checkpoint.graphNodes || []));
+        this.rebuildVectorIndex();
+    }
+
+    private restoreTenant(memory: VectorMemoryEntry): VectorMemoryEntry {
+        if (!memory.tenantId && this.defaultTenantId) {
+            return { ...memory, tenantId: this.defaultTenantId };
+        }
+        return memory;
+    }
+
+    private cloneForCheckpoint<T>(value: T): T {
+        if (typeof structuredClone === 'function') {
+            return structuredClone(value);
+        }
+        return JSON.parse(JSON.stringify(value));
     }
 
     // 1. Working Memory (Short-term context, sliding window)

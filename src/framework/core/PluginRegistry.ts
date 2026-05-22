@@ -59,10 +59,32 @@ export class PluginRegistry {
             return Array.isArray(original) && Array.isArray(candidate);
         }
         if (typeof original !== typeof candidate) return false;
+        if (typeof original === 'string') {
+            return this.hasRelatedStringContent(original, candidate);
+        }
         if (typeof original === 'object') {
             return !this.hasUnsafeObjectKey(candidate, new WeakSet<object>());
         }
         return true;
+    }
+
+    private hasRelatedStringContent(original: string, candidate: string): boolean {
+        const normalize = (value: string) => value
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const originalText = normalize(original);
+        const candidateText = normalize(candidate);
+        if (!originalText) return candidateText.length < 200;
+        if (candidateText.includes(originalText)) return true;
+
+        const originalWords = Array.from(new Set(originalText.split(' ').filter(word => word.length > 2)));
+        if (originalWords.length === 0) return false;
+
+        const overlap = originalWords.filter(word => candidateText.includes(word)).length / originalWords.length;
+        return overlap >= 0.3;
     }
 
     private hasUnsafeObjectKey(value: any, seen: WeakSet<object>): boolean {

@@ -2,7 +2,7 @@ import { PluginRegistry, globalPluginRegistry } from './PluginRegistry.ts';
 import { WorkerPool, globalWorkerPool } from './WorkerPool.ts';
 import { globalCircuitBreakers, CircuitBreakerRegistry } from '../resilience/CircuitBreaker.ts';
 import { QueueBroker, globalQueueBroker } from '../orchestration/QueueBroker.ts';
-import { PolicyEngine, globalPolicyEngine } from '../governance/PolicyEngine.ts';
+import { PolicyEngine } from '../governance/PolicyEngine.ts';
 import { AuditLog, globalAuditLog } from '../governance/AuditLog.ts';
 import { StateAdapter, globalStateAdapter } from './StateAdapter.ts';
 import { AgentRegistry, globalRegistry } from '../agents/AgentRegistry.ts';
@@ -100,9 +100,7 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
     const circuitBreakers = options.circuitBreakers || (
         hasScopedEventStore ? new CircuitBreakerRegistry(eventStore) : globalCircuitBreakers
     );
-    const policyEngine = options.policyEngine || (
-        hasScopedEventStore ? new PolicyEngine(eventStore) : globalPolicyEngine
-    );
+    const policyEngine = options.policyEngine || new PolicyEngine(eventStore);
     const workerPool = options.workerPool || (
         options.eventStore || options.stateAdapter
             ? new WorkerPool(

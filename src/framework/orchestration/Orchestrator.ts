@@ -246,7 +246,8 @@ export class Orchestrator {
                             llmConfig: a.llmConfig,
                             capabilities: a.card.capabilities,
                             priority: a.card.priority,
-                            urgency: a.card.urgency
+                            urgency: a.card.urgency,
+                            memories: a.memory.exportForCheckpoint()
                         }))
                     };
                     await workflowRuntime.stateStore.saveState(error.approvalId, stateToSave);
@@ -451,6 +452,7 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                 stateAdapter: this.runtime.stateAdapter,
                 eventStore: this.runtime.eventStore
             });
+            memory.importFromCheckpoint(def.memories);
             const role = def.role || 'WORKER';
             const args = [
                 def.name || def.id || 'Recovered AI Agent',

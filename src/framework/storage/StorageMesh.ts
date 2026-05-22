@@ -30,6 +30,9 @@ export class StorageMesh {
     private strategy: 'LOCAL' | 'S3_MOCK' | 'MEMORY';
     private watchers: Map<string, fs.FSWatcher> = new Map();
     private activeWrites: Set<string> = new Set();
+    private activeWriteCounts: Map<string, number> = new Map();
+    private activeWriteCleanupTimers: Map<string, NodeJS.Timeout> = new Map();
+    private inFlightWrites: Set<Promise<void>> = new Set();
     private activeHeals: Map<string, number> = new Map(); // relativePath -> attempt count
     private healBackoffTimers: Map<string, NodeJS.Timeout> = new Map();
     private ignorePatterns: RegExp[];
@@ -189,6 +192,21 @@ export class StorageMesh {
     }
 
     public dispose(): void {
+        this.closeWatchersAndHealTimers();
+        if (this.inFlightWrites.size === 0) {
+            this.clearActiveWriteGuards();
+        }
+    }
+
+    public async disposeAsync(): Promise<void> {
+        this.closeWatchersAndHealTimers();
+        if (this.inFlightWrites.size > 0) {
+            await Promise.allSettled(Array.from(this.inFlightWrites));
+        }
+        this.clearActiveWriteGuards();
+    }
+
+    private closeWatchersAndHealTimers(): void {
         for (const watcher of this.watchers.values()) {
             watcher.close();
         }
@@ -199,7 +217,62 @@ export class StorageMesh {
         }
         this.healBackoffTimers.clear();
         this.activeHeals.clear();
+    }
+
+    private clearActiveWriteGuards(): void {
+        for (const timer of this.activeWriteCleanupTimers.values()) {
+            clearTimeout(timer);
+        }
+        this.activeWriteCleanupTimers.clear();
+        this.activeWriteCounts.clear();
         this.activeWrites.clear();
+    }
+
+    private beginActiveWrite(relativePath: string): void {
+        const pendingTimer = this.activeWriteCleanupTimers.get(relativePath);
+        if (pendingTimer) {
+            clearTimeout(pendingTimer);
+            this.activeWriteCleanupTimers.delete(relativePath);
+        }
+
+        this.activeWrites.add(relativePath);
+        this.activeWriteCounts.set(relativePath, (this.activeWriteCounts.get(relativePath) || 0) + 1);
+    }
+
+    private finishActiveWrite(relativePath: string): void {
+        const remaining = Math.max(0, (this.activeWriteCounts.get(relativePath) || 1) - 1);
+        if (remaining > 0) {
+            this.activeWriteCounts.set(relativePath, remaining);
+            return;
+        }
+
+        this.activeWriteCounts.delete(relativePath);
+        const timer = setTimeout(() => {
+            if (!this.activeWriteCounts.has(relativePath)) {
+                this.activeWrites.delete(relativePath);
+            }
+            this.activeWriteCleanupTimers.delete(relativePath);
+        }, 1000);
+        this.activeWriteCleanupTimers.set(relativePath, timer);
+    }
+
+    private async trackWrite(relativePath: string, operation: () => Promise<void>): Promise<void> {
+        this.beginActiveWrite(relativePath);
+
+        const writePromise = (async () => {
+            try {
+                await operation();
+            } finally {
+                this.finishActiveWrite(relativePath);
+            }
+        })();
+
+        this.inFlightWrites.add(writePromise);
+        try {
+            await writePromise;
+        } finally {
+            this.inFlightWrites.delete(writePromise);
+        }
     }
 
     /**
@@ -207,9 +280,7 @@ export class StorageMesh {
      * Updates the golden master so file watcher doesn't consider it tampering.
      */
     public async writeFile(relativePath: string, content: string | Buffer): Promise<void> {
-        this.activeWrites.add(relativePath);
-        
-        try {
+        await this.trackWrite(relativePath, async () => {
             const safePath = this.getSafePath(relativePath);
             const hash = this.generateHash(content);
 
@@ -232,9 +303,7 @@ export class StorageMesh {
                 }
                 await fs.promises.writeFile(safePath, content);
             }
-        } finally {
-            setTimeout(() => this.activeWrites.delete(relativePath), 1000); // Give watcher time to ignore
-        }
+        });
     }
 
     /**
@@ -276,16 +345,13 @@ export class StorageMesh {
     }
 
     public async deleteFile(relativePath: string): Promise<void> {
-        this.activeWrites.add(relativePath);
-        try {
+        await this.trackWrite(relativePath, async () => {
             const safePath = this.getSafePath(relativePath);
             this.fileManifest.delete(relativePath);
             if (this.strategy === 'LOCAL' && fs.existsSync(safePath)) {
                 await fs.promises.rm(safePath, { force: true });
             }
-        } finally {
-            setTimeout(() => this.activeWrites.delete(relativePath), 1000);
-        }
+        });
     }
 
     /**
@@ -333,8 +399,7 @@ export class StorageMesh {
      * Appends content to a file.
      */
     public async appendFile(relativePath: string, content: string | Buffer, options: AppendFileOptions = {}): Promise<void> {
-        this.activeWrites.add(relativePath);
-        try {
+        await this.trackWrite(relativePath, async () => {
             const safePath = this.getSafePath(relativePath);
             
             // 1. Read existing or use empty
@@ -382,9 +447,7 @@ export class StorageMesh {
                 }
                 await fs.promises.appendFile(safePath, content);
             }
-        } finally {
-            setTimeout(() => this.activeWrites.delete(relativePath), 1000);
-        }
+        });
     }
 }
 

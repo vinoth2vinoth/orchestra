@@ -15,6 +15,8 @@ export interface Policy {
 export class PolicyEngine {
     private policies: Policy[] = [];
     private recentTaskFingerprints: Map<string, string[]> = new Map();
+    private readonly MAX_FINGERPRINT_KEYS = 10000;
+    private readonly FINGERPRINT_EVICTION_BATCH = 1000;
 
     constructor(private eventStore: EventStore = globalEventStore) {
         this.loadDefaultPolicies();
@@ -51,6 +53,7 @@ export class PolicyEngine {
         }
 
         this.recentTaskFingerprints.set(loopKey, [...recent.slice(-9), fingerprint]);
+        this.evictFingerprintKeysIfNeeded();
 
         if (violations.length > 0) {
             this.eventStore.append({
@@ -65,10 +68,38 @@ export class PolicyEngine {
     }
 
     private fingerprintTask(task: any): string {
-        return JSON.stringify(task)
+        const taskStr = typeof task === 'string'
+            ? task
+            : JSON.stringify(this.stripBlackboardFromTask(task));
+        return taskStr
+            .replace(/<GLOBAL_BLACKBOARD_UNTRUSTED_CONTENT>[\s\S]*?<\/GLOBAL_BLACKBOARD_UNTRUSTED_CONTENT>/gi, '')
+            .replace(/\[GLOBAL BLACKBOARD CONTEXT[^\]]*\][\s\S]*?(?=\n\n|\r\n\r\n|$)/gi, '')
             .toLowerCase()
             .replace(/\s+/g, ' ')
             .trim();
+    }
+
+    private stripBlackboardFromTask(task: any): any {
+        if (!task || typeof task !== 'object') return task;
+        if (Array.isArray(task)) return task.map(item => this.stripBlackboardFromTask(item));
+
+        const stripped: Record<string, any> = {};
+        for (const [key, value] of Object.entries(task)) {
+            if (key === 'blackboard') continue;
+            stripped[key] = this.stripBlackboardFromTask(value);
+        }
+        return stripped;
+    }
+
+    private evictFingerprintKeysIfNeeded() {
+        if (this.recentTaskFingerprints.size <= this.MAX_FINGERPRINT_KEYS) return;
+
+        let deleted = 0;
+        for (const key of this.recentTaskFingerprints.keys()) {
+            this.recentTaskFingerprints.delete(key);
+            deleted++;
+            if (deleted >= this.FINGERPRINT_EVICTION_BATCH) break;
+        }
     }
 
     private loadDefaultPolicies() {
