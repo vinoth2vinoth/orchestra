@@ -86,7 +86,7 @@ export class AuditLog {
             const logLine = JSON.stringify(entry) + '\n';
             
             try {
-                await globalStorageMesh.appendFile(logPath, logLine);
+                await globalStorageMesh.appendFile(logPath, logLine, { idempotencyKey: hash });
                 this.lastHash = hash;
                 AuditLog.tailHashes.set(logPath, hash);
                 console.log(`[AUDIT] ${action} logged for ${agentId} in thread ${threadId}`);

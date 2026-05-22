@@ -501,6 +501,24 @@ async function testStorageMeshDisposeClosesWatchers() {
   }
 }
 
+async function testStorageMeshAppendIdempotencyKeySkipsDuplicateChunk() {
+  const base = path.resolve('workspace', `storage-append-idempotency-${crypto.randomUUID()}`);
+  const mesh = new StorageMesh(base);
+  try {
+    await mesh.appendFile('audit.jsonl', '{"id":"a"}\n', { idempotencyKey: 'entry-a' });
+    await mesh.appendFile('audit.jsonl', '{"id":"a"}\n', { idempotencyKey: 'entry-a' });
+    await mesh.appendFile('audit.jsonl', '{"id":"a"}\n');
+
+    const content = (await mesh.readFile('audit.jsonl')).toString();
+    const lines = content.trim().split('\n');
+    assert(lines.length === 2, `Expected idempotent append to skip only keyed duplicate, got ${JSON.stringify(lines)}`);
+  } finally {
+    mesh.dispose();
+    const cwd = process.cwd();
+    if (base.startsWith(cwd)) fs.rmSync(base, { recursive: true, force: true });
+  }
+}
+
 async function testEventStoreReportsDroppedTailEvents() {
   const eventStore = new EventStore({
     stateAdapter: new MemoryStateAdapter(),
@@ -667,6 +685,7 @@ const tests = [
   ['policy engine blocks repeated small tasks', testPolicyEngineBlocksRepeatedSmallTasks],
   ['escalation pending approval expires', testEscalationPendingApprovalExpires],
   ['storage mesh dispose closes watchers', testStorageMeshDisposeClosesWatchers],
+  ['storage mesh append idempotency key skips duplicate chunk', testStorageMeshAppendIdempotencyKeySkipsDuplicateChunk],
   ['event store reports dropped tail events', testEventStoreReportsDroppedTailEvents],
   ['provider fallback runs before primary retries on quota', testProviderFallbackRunsBeforePrimaryRetriesOnQuota],
   ['HITL resume reconstructs saved AI Agents', testHitlResumeReconstructsSavedAgents],

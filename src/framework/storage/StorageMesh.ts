@@ -16,6 +16,10 @@ export interface StorageOptions {
     ignorePatterns?: RegExp[];
 }
 
+export interface AppendFileOptions {
+    idempotencyKey?: string;
+}
+
 /**
  * StorageMesh acts as a Virtual File System (VFS) for the framework.
  * It provides 100% availability through redundant backups, integrity checks, and self-healing.
@@ -328,7 +332,7 @@ export class StorageMesh {
     /**
      * Appends content to a file.
      */
-    public async appendFile(relativePath: string, content: string | Buffer): Promise<void> {
+    public async appendFile(relativePath: string, content: string | Buffer, options: AppendFileOptions = {}): Promise<void> {
         this.activeWrites.add(relativePath);
         try {
             const safePath = this.getSafePath(relativePath);
@@ -342,10 +346,24 @@ export class StorageMesh {
                 existingContent = await fs.promises.readFile(safePath);
             }
 
+            const existingBuffer = typeof existingContent === 'string' ? Buffer.from(existingContent) : existingContent;
+            const appendBuffer = typeof content === 'string' ? Buffer.from(content) : content;
+
+            if (options.idempotencyKey && existingBuffer.includes(appendBuffer)) {
+                this.fileManifest.set(relativePath, {
+                    versionId: crypto.randomUUID(),
+                    hash: this.generateHash(existingBuffer),
+                    content: existingBuffer,
+                    timestamp: Date.now(),
+                    isProtected: manifestEntry ? manifestEntry.isProtected : true
+                });
+                return;
+            }
+
             // 2. Combine
             const newContent = Buffer.concat([
-                typeof existingContent === 'string' ? Buffer.from(existingContent) : existingContent,
-                typeof content === 'string' ? Buffer.from(content) : content
+                existingBuffer,
+                appendBuffer
             ]);
 
             // 3. Authorized append. Avoid rewriting large append-only logs on every entry.
