@@ -10,6 +10,7 @@ export interface TaskPayload {
     blackboard: any;
     maxAttempts?: number;
     leaseId?: string;
+    idempotencyKey?: string;
 }
 
 export interface TaskResult {

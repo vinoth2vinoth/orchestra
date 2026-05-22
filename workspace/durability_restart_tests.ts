@@ -1,5 +1,6 @@
 import {
   BaseAgent,
+  AgentRegistry,
   MemoryMesh,
   Orchestrator,
   QueueBroker,
@@ -8,6 +9,8 @@ import {
   type TaskResult
 } from '../src/framework/index.ts';
 import { StateStore } from '../src/framework/orchestration/StateStore.ts';
+import { WorkerNode } from '../src/framework/orchestration/WorkerNode.ts';
+import { getExecutionContext } from '../src/framework/core/ExecutionContext.ts';
 import { WorkflowSuspendedError } from '../src/framework/orchestration/WorkflowSuspendedError.ts';
 
 class DurableSuspendingAgent extends BaseAgent {
@@ -70,6 +73,70 @@ class DurableFailingAgent extends BaseAgent {
 
   async execute(): Promise<any> {
     throw new Error('resume failed after restart');
+  }
+}
+
+class ContextReportingAgent extends BaseAgent {
+  constructor(id: string) {
+    super(
+      id,
+      `Reports distributed execution context for ${id}.`,
+      'WORKER',
+      new MemoryMesh(),
+      { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      id
+    );
+  }
+
+  async execute(): Promise<any> {
+    const context = getExecutionContext();
+    return {
+      tenantId: context.tenantId,
+      agentId: context.agentId,
+      threadId: context.threadId,
+      taskId: context.taskId,
+      leaseId: context.leaseId,
+      idempotencyKey: context.idempotencyKey
+    };
+  }
+}
+
+class IdempotentSideEffectAgent extends BaseAgent {
+  public attempts = 0;
+
+  constructor(id: string, private readonly sideEffects: Map<string, number>) {
+    super(
+      id,
+      `Uses idempotency key before recording side effects for ${id}.`,
+      'WORKER',
+      new MemoryMesh(),
+      { apiKey: 'SIMULATION_ONLY', modelName: 'test-model' },
+      [],
+      undefined,
+      undefined,
+      undefined,
+      id
+    );
+  }
+
+  async execute(): Promise<any> {
+    this.attempts++;
+    const context = getExecutionContext();
+    const key = context.idempotencyKey || 'missing-key';
+    if (!this.sideEffects.has(key)) {
+      this.sideEffects.set(key, 1);
+      throw new Error('simulated crash after side effect before completion was recorded');
+    }
+
+    return {
+      attempts: this.attempts,
+      idempotencyKey: key,
+      sideEffectCount: this.sideEffects.get(key)
+    };
   }
 }
 
@@ -246,6 +313,81 @@ async function testStaleLeaseResultCannotWinCurrentLease() {
   }
 }
 
+async function testWorkerNodeProvidesExecutionContext() {
+  const broker = new QueueBroker({ visibilityTimeoutMs: 500, defaultMaxAttempts: 2 });
+  const registry = new AgentRegistry();
+  const agentId = `context-agent-${Date.now()}`;
+  const agent = new ContextReportingAgent(agentId);
+  const worker = new WorkerNode(`context-worker-${Date.now()}`, {
+    queueBroker: broker,
+    agentRegistry: registry,
+    tenantId: 'runtime-tenant'
+  });
+
+  try {
+    await broker.resetForTests();
+    registry.register(agent);
+    worker.start();
+
+    const taskId = `context-task-${Date.now()}`;
+    const result = await withTimeout(broker.publish({
+      ...createTask(taskId),
+      agentId,
+      blackboard: { _tenantId: 'task-tenant' }
+    }), 4000);
+
+    assert(result.status === 'success', `Expected context worker success, got ${JSON.stringify(result)}`);
+    assert(result.result?.tenantId === 'task-tenant', `Expected task tenant in context, got ${JSON.stringify(result.result)}`);
+    assert(result.result?.agentId === agentId, `Expected agent id in context, got ${JSON.stringify(result.result)}`);
+    assert(result.result?.taskId === taskId, `Expected task id in context, got ${JSON.stringify(result.result)}`);
+    assert(typeof result.result?.leaseId === 'string' && result.result.leaseId.length > 0, `Expected lease id in context, got ${JSON.stringify(result.result)}`);
+    assert(result.result?.idempotencyKey === taskId, `Expected default idempotency key to equal task id, got ${JSON.stringify(result.result)}`);
+  } finally {
+    worker.stop();
+    registry.unregister(agentId);
+    await broker.resetForTests();
+    broker.dispose();
+  }
+}
+
+async function testIdempotencyKeySurvivesRetryAfterUnrecordedCompletionWindow() {
+  const broker = new QueueBroker({ visibilityTimeoutMs: 500, defaultMaxAttempts: 3 });
+  const registry = new AgentRegistry();
+  const sideEffects = new Map<string, number>();
+  const agentId = `idempotent-agent-${Date.now()}`;
+  const agent = new IdempotentSideEffectAgent(agentId, sideEffects);
+  const worker = new WorkerNode(`idempotent-worker-${Date.now()}`, {
+    queueBroker: broker,
+    agentRegistry: registry,
+    tenantId: 'durability-tenant'
+  });
+
+  try {
+    await broker.resetForTests();
+    registry.register(agent);
+    worker.start();
+
+    const taskId = `idempotent-side-effect-${Date.now()}`;
+    const idempotencyKey = `external-write:${taskId}`;
+    const result = await withTimeout(broker.publish({
+      ...createTask(taskId),
+      agentId,
+      idempotencyKey
+    }), 4000);
+
+    assert(result.status === 'success', `Expected retry to complete, got ${JSON.stringify(result)}`);
+    assert(result.result?.idempotencyKey === idempotencyKey, `Expected stable idempotency key, got ${JSON.stringify(result.result)}`);
+    assert(result.result?.sideEffectCount === 1, `Expected side effect to be guarded once, got ${JSON.stringify(result.result)}`);
+    assert(sideEffects.get(idempotencyKey) === 1, `Expected one external side effect, got ${sideEffects.get(idempotencyKey)}`);
+    assert(agent.attempts === 2, `Expected one failed attempt and one retry, got ${agent.attempts}`);
+  } finally {
+    worker.stop();
+    registry.unregister(agentId);
+    await broker.resetForTests();
+    broker.dispose();
+  }
+}
+
 async function suspendWorkflowForRestart(stateStore: StateStore, approvalId: string, threadId: string) {
   const result = await new Orchestrator({ stateStore }).executeWorkflow(
     'requires human approval before continuing',
@@ -355,6 +497,8 @@ const tests = [
   ['duplicate publish is idempotent while in flight', testDuplicatePublishIsIdempotentWhileInFlight],
   ['fresh broker recovers expired lease after restart', testFreshBrokerRecoversExpiredLeaseAfterRestart],
   ['stale lease result cannot win current lease', testStaleLeaseResultCannotWinCurrentLease],
+  ['worker node provides execution context', testWorkerNodeProvidesExecutionContext],
+  ['idempotency key survives retry after unrecorded completion window', testIdempotencyKeySurvivesRetryAfterUnrecordedCompletionWindow],
   ['fresh orchestrator resumes suspended workflow', testFreshOrchestratorResumesSuspendedWorkflow],
   ['failed resume keeps suspended state', testFailedResumeKeepsSuspendedState],
   ['graph resume preserves saved shape', testGraphResumePreservesSavedShape]

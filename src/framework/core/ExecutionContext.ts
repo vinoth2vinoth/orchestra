@@ -6,6 +6,9 @@ export interface ExecutionContext {
     agentId: string;
     threadId: string;
     capabilities: string[];
+    taskId?: string;
+    leaseId?: string;
+    idempotencyKey?: string;
     runtime?: RuntimeServices;
 }
 

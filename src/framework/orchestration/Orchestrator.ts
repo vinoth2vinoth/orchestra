@@ -515,7 +515,8 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
                     agentId: agent.card.id,
                     agentConfig: agent.card,
                     payload: task,
-                    blackboard
+                    blackboard,
+                    idempotencyKey: `${threadId}:${agent.card.id}`
                 });
 
                 const timeoutPromise = new Promise((_, reject) => 

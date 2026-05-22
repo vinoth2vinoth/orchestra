@@ -1,5 +1,6 @@
 import { TaskPayload } from './QueueBroker.ts';
 import { RuntimeContextOptions, RuntimeServices, createRuntimeContext } from '../core/RuntimeContext.ts';
+import { runWithContext } from '../core/ExecutionContext.ts';
 
 /**
  * Represents an independent worker process/node that pulls tasks from the QueueBroker.
@@ -74,7 +75,16 @@ export class WorkerNode {
                     payload: { message: `Simulated Worker Node ${this.nodeId} assumed identity of agent ${agentToExec.card.name} for execution.` }
                 });
 
-                const result = await agentToExec.execute(task.payload, task.threadId);
+                const result = await runWithContext({
+                    tenantId: task.blackboard?._tenantId || this.runtime.tenantId,
+                    agentId: agentToExec.card.id,
+                    threadId: task.threadId,
+                    capabilities: agentToExec.card.capabilities,
+                    taskId: task.taskId,
+                    leaseId: task.leaseId,
+                    idempotencyKey: task.idempotencyKey || task.taskId,
+                    runtime: this.runtime
+                }, async () => agentToExec.execute(task.payload, task.threadId));
                 
                 if (this.isRunning) {
                     await this.runtime.queueBroker.publishResult({
