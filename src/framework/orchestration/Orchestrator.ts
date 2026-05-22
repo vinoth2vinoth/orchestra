@@ -144,6 +144,7 @@ export class Orchestrator {
         const configRuntimeNeedsScopedRegistry = Boolean(
             config.runtime?.tenantId ||
             config.runtime?.stateAdapter ||
+            config.runtime?.messageBus ||
             config.runtime?.pluginRegistry ||
             config.runtime?.circuitBreakers ||
             config.runtime?.queueBroker ||
@@ -160,6 +161,7 @@ export class Orchestrator {
         const workflowRuntime = config.runtime ? createRuntimeContext({
             tenantId: config.runtime.tenantId || this.runtime.tenantId,
             stateAdapter: config.runtime.stateAdapter || this.runtime.stateAdapter,
+            messageBus: config.runtime.messageBus || this.runtime.messageBus,
             pluginRegistry: config.runtime.pluginRegistry || this.runtime.pluginRegistry,
             circuitBreakers: config.runtime.circuitBreakers || (config.runtime.eventStore ? undefined : this.runtime.circuitBreakers),
             queueBroker: config.runtime.queueBroker || this.runtime.queueBroker,
@@ -224,10 +226,20 @@ export class Orchestrator {
                         threadId,
                         approvalId: error.approvalId,
                         task,
-                        config: { paradigm: config.paradigm }, 
+                        config: {
+                            paradigm: config.paradigm,
+                            edges: config.edges,
+                            events: config.events,
+                            maxIterations: config.maxIterations,
+                            maxRetries: config.maxRetries,
+                            useDistributedQueue: config.useDistributedQueue,
+                            enableLearning: config.enableLearning,
+                            enableReflection: config.enableReflection
+                        },
                         blackboard: config.blackboard,
                         history: workflowRuntime.eventStore.getLogs().filter(e => e.threadId === threadId),
                         agentDefinitions: config.agents.map(a => ({
+                            id: a.card.id,
                             name: a.card.name,
                             role: a.card.role,
                             systemInstruction: a.card.description,
@@ -420,9 +432,9 @@ Otherwise, output "NO_LEARNING_DETECTED".`;
         }
 
         const resumedConfig: WorkflowConfig = {
-            paradigm: state.config.paradigm,
+            ...state.config,
             agents: resumedAgents,
-            maxRetries: 1,
+            maxRetries: state.config.maxRetries ?? 1,
             blackboard: state.blackboard,
             runtime: this.runtime
         };

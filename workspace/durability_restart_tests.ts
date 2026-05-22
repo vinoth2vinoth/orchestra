@@ -306,12 +306,58 @@ async function testFailedResumeKeepsSuspendedState() {
   assert(saved?.threadId === threadId, `Failed resume must keep approval state for retry, got ${JSON.stringify(saved)}`);
 }
 
+async function testGraphResumePreservesSavedShape() {
+  const stateStore = new StateStore();
+  const approvalId = `graph-resume-approval-${Date.now()}`;
+  const threadId = `DURABILITY_GRAPH_RESUME_${Date.now()}`;
+  const edges = [{ from: 'graph-start', to: 'graph-end' }];
+
+  const suspended = await new Orchestrator({ stateStore }).executeWorkflow(
+    'graph work that pauses before the second AI Agent',
+    {
+      paradigm: 'GRAPH',
+      agents: [
+        new DurableSuspendingAgent('graph-start', approvalId),
+        new DurableResultAgent('graph-end', 'should-not-run-before-approval')
+      ],
+      edges,
+      maxRetries: 0
+    },
+    threadId
+  );
+
+  assert(suspended.status === 'SUSPENDED', `Expected graph workflow to suspend, got ${JSON.stringify(suspended)}`);
+
+  const saved = await stateStore.getState(approvalId);
+  assert(JSON.stringify(saved?.config?.edges) === JSON.stringify(edges), `Expected graph edges to be saved, got ${JSON.stringify(saved?.config)}`);
+  assert(saved?.agentDefinitions?.some(agent => agent.id === 'graph-start'), `Expected saved graph-start AI Agent id, got ${JSON.stringify(saved?.agentDefinitions)}`);
+  assert(saved?.agentDefinitions?.some(agent => agent.id === 'graph-end'), `Expected saved graph-end AI Agent id, got ${JSON.stringify(saved?.agentDefinitions)}`);
+
+  const resumed = await new Orchestrator({ stateStore }).resumeWorkflow(
+    approvalId,
+    'APPROVED',
+    'continue graph after approval',
+    [
+      new DurableResultAgent('graph-start', 'start-after-approval'),
+      new DurableResultAgent('graph-end', 'end-after-approval')
+    ]
+  );
+
+  assert(resumed.graphCompleted === true, `Expected graph resume to complete, got ${JSON.stringify(resumed)}`);
+  assert(resumed.results?.['graph-start']?.answer === 'start-after-approval', `Expected graph-start result after resume, got ${JSON.stringify(resumed.results)}`);
+  assert(resumed.results?.['graph-end']?.answer === 'end-after-approval', `Expected graph-end result after resume, got ${JSON.stringify(resumed.results)}`);
+
+  const remaining = await stateStore.getState(approvalId);
+  assert(!remaining, `Successful graph resume should delete approval state, got ${JSON.stringify(remaining)}`);
+}
+
 const tests = [
   ['duplicate publish is idempotent while in flight', testDuplicatePublishIsIdempotentWhileInFlight],
   ['fresh broker recovers expired lease after restart', testFreshBrokerRecoversExpiredLeaseAfterRestart],
   ['stale lease result cannot win current lease', testStaleLeaseResultCannotWinCurrentLease],
   ['fresh orchestrator resumes suspended workflow', testFreshOrchestratorResumesSuspendedWorkflow],
-  ['failed resume keeps suspended state', testFailedResumeKeepsSuspendedState]
+  ['failed resume keeps suspended state', testFailedResumeKeepsSuspendedState],
+  ['graph resume preserves saved shape', testGraphResumePreservesSavedShape]
 ] as const;
 
 const results: Array<{ name: string; ok: boolean; ms: number; error?: string; stack?: string }> = [];
