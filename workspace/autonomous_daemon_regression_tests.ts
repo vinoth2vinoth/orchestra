@@ -3,13 +3,24 @@ import path from 'path';
 import assert from 'assert';
 import { AutonomousDaemon } from '../src/framework/orchestration/AutonomousDaemon.ts';
 import { readProjectBoard } from '../src/framework/tools/ProjectBoardStore.ts';
+import { AgentRegistry, EventStore, globalEventStore, globalRegistry, LocalMessageBus, MemoryStateAdapter, createRuntimeContext } from '../src/framework/index.ts';
+import { SimulationManager } from '../src/framework/core/SimulationManager.ts';
 
 const projectPath = path.join(process.cwd(), 'workspace', 'projects.json');
+
+type TestDaemonOptions = {
+  now?: () => number;
+  staleTaskMs?: number;
+  maxTaskRuntimeMs?: number;
+  heartbeatIntervalMs?: number;
+  maxAttempts?: number;
+  runtime?: any;
+};
 
 class TestDaemon extends AutonomousDaemon {
   public executions: Array<{ projectId: string; taskId: string }> = [];
 
-  constructor(private readonly result: any = 'daemon completed', options: { now?: () => number; staleTaskMs?: number; maxTaskRuntimeMs?: number; heartbeatIntervalMs?: number; maxAttempts?: number } = {}) {
+  constructor(private readonly result: any = 'daemon completed', options: TestDaemonOptions = {}) {
     super(100000, options);
   }
 
@@ -21,6 +32,31 @@ class TestDaemon extends AutonomousDaemon {
   public async exposeFinalize(projectId: string, taskId: string, runId: string, result: any, isError = false) {
     await this.finalizeTask(projectId, taskId, runId, result, isError);
   }
+}
+
+class ExposedDaemon extends AutonomousDaemon {
+  public async exposeExecuteSwarmTask(project: any, task: any) {
+    return this.executeSwarmTask(project, task);
+  }
+}
+
+function createScopedRuntime(label: string) {
+  const eventStore = new EventStore({
+    stateAdapter: new MemoryStateAdapter(),
+    messageBus: new LocalMessageBus(),
+    historyKey: `daemon-${label}-${crypto.randomUUID()}`
+  });
+  const agentRegistry = new AgentRegistry({ eventStore });
+  return {
+    eventStore,
+    agentRegistry,
+    runtime: createRuntimeContext({
+      tenantId: `tenant-${label}`,
+      stateAdapter: new MemoryStateAdapter(),
+      eventStore,
+      agentRegistry
+    })
+  };
 }
 
 function writeBoard(board: any) {
@@ -153,6 +189,53 @@ async function testExpiredTaskBlocksAfterMaxAttempts() {
     assert.equal(task.daemonLease, undefined);
     assert.equal(daemon.executions.length, 0);
     assert(String(task.description).includes('Max retry count reached'));
+  });
+}
+
+async function testDaemonRecoveryEventsUseScopedRuntime() {
+  await withBoardFixture(async () => {
+    const projectId = `daemon-scope-project-${crypto.randomUUID()}`;
+    const taskId = `task-scope-${crypto.randomUUID()}`;
+    writeBoard({
+      projects: [{
+        id: projectId,
+        name: 'Scoped Daemon Project',
+        tasks: [{
+          id: taskId,
+          title: 'Block scoped expired task',
+          status: 'IN_PROGRESS',
+          assignee: 'AI Bot',
+          daemonAttempts: 3,
+          daemonLease: {
+            runId: 'scoped-expired-run',
+            startedAt: 100,
+            expiresAt: 200
+          }
+        }]
+      }]
+    });
+
+    const { eventStore, runtime } = createScopedRuntime('recovery');
+    try {
+      const daemon = new TestDaemon('should not run', { now: () => 1000, staleTaskMs: 5000, maxAttempts: 3, runtime });
+      await daemon.runOnce();
+
+      const scopedEvent = eventStore.getLogs().find(event =>
+        event.payload?.action === 'BACKGROUND_TASK_BLOCKED' &&
+        event.payload?.projectId === projectId &&
+        event.payload?.taskId === taskId
+      );
+      const leakedEvent = globalEventStore.getLogs().find(event =>
+        event.payload?.action === 'BACKGROUND_TASK_BLOCKED' &&
+        event.payload?.projectId === projectId &&
+        event.payload?.taskId === taskId
+      );
+
+      assert(scopedEvent, 'Expected daemon recovery event in scoped event store');
+      assert(!leakedEvent, 'Expected daemon recovery event not to leak into global event store');
+    } finally {
+      eventStore.dispose();
+    }
   });
 }
 
@@ -359,16 +442,51 @@ async function testLateTimedOutResultCannotOverwriteRetry() {
   });
 }
 
+async function testDaemonSwarmUsesScopedRuntimeServices() {
+  const { eventStore, agentRegistry, runtime } = createScopedRuntime('swarm');
+  const beforeGlobalAgents = globalRegistry.getAllAgents().length;
+  const daemon = new ExposedDaemon(100000, { runtime });
+  const projectId = `daemon-swarm-project-${crypto.randomUUID()}`;
+  const taskId = `task-swarm-${crypto.randomUUID()}`;
+
+  SimulationManager.enable();
+  try {
+    await daemon.exposeExecuteSwarmTask(
+      { id: projectId, name: 'Scoped Swarm Project' },
+      { id: taskId, title: 'Run scoped daemon swarm', description: 'No real API calls.' }
+    );
+
+    const scopedStart = eventStore.getLogs().find(event =>
+      event.payload?.action === 'BACKGROUND_TASK_STARTED' &&
+      event.payload?.taskId === taskId
+    );
+    const leakedStart = globalEventStore.getLogs().find(event =>
+      event.payload?.action === 'BACKGROUND_TASK_STARTED' &&
+      event.payload?.taskId === taskId
+    );
+
+    assert(scopedStart, 'Expected daemon swarm start event in scoped event store');
+    assert(!leakedStart, 'Expected daemon swarm start event not to leak into global event store');
+    assert.equal(globalRegistry.getAllAgents().length, beforeGlobalAgents);
+    assert.equal(agentRegistry.findAgentsByRole('WORKER').length, 0);
+  } finally {
+    SimulationManager.disable();
+    eventStore.dispose();
+  }
+}
+
 const tests = [
   ['TODO daemon task is leased and completed', testTodoTaskIsLeasedAndCompleted],
   ['expired daemon task is requeued and retried', testExpiredTaskIsRequeuedAndRetried],
   ['expired daemon task blocks after max attempts', testExpiredTaskBlocksAfterMaxAttempts],
+  ['daemon recovery events use scoped runtime', testDaemonRecoveryEventsUseScopedRuntime],
   ['legacy in-progress task without lease is recovered', testLegacyInProgressTaskWithoutLeaseIsRecovered],
   ['stale finalize cannot overwrite current lease', testStaleFinalizeCannotOverwriteCurrentLease],
   ['heartbeat extends current lease', testHeartbeatExtendsCurrentLease],
   ['hung task times out and becomes retryable', testHungTaskTimesOutAndBecomesRetryable],
   ['hung task blocks at max attempts', testHungTaskBlocksAtMaxAttempts],
-  ['late timed-out result cannot overwrite retry', testLateTimedOutResultCannotOverwriteRetry]
+  ['late timed-out result cannot overwrite retry', testLateTimedOutResultCannotOverwriteRetry],
+  ['daemon swarm uses scoped runtime services', testDaemonSwarmUsesScopedRuntimeServices]
 ] as const;
 
 const results = [];

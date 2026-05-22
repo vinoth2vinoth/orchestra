@@ -1,5 +1,4 @@
 import { WorkerNode } from './WorkerNode.ts';
-import { globalMessageBus } from '../core/MessageBus.ts';
 import { RuntimeContextOptions, RuntimeServices, createRuntimeContext } from '../core/RuntimeContext.ts';
 
 export class WorkerCluster {
@@ -25,7 +24,7 @@ export class WorkerCluster {
         this.isInitialized = true;
         
         // Listen to heartbeats
-        globalMessageBus.subscribe('WORKER_HEARTBEATS', (msg: any) => {
+        this.runtime.messageBus.subscribe('WORKER_HEARTBEATS', (msg: any) => {
             this.nodeLastHeartbeat.set(msg.nodeId, msg.timestamp);
             this.activeTaskByNode.set(msg.nodeId, msg.activeTaskId);
         }).then(unsubscribe => {

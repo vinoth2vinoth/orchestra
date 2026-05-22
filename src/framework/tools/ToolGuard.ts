@@ -16,7 +16,8 @@ export class ToolGuard {
         toolName: string,
         schema: T,
         execute: (args: z.infer<T>) => Promise<any>,
-        eventStore: EventStore = globalEventStore
+        eventStore: EventStore = globalEventStore,
+        threadId: string = 'GLOBAL'
     ) {
         return async (args: z.infer<T>) => {
             try {
@@ -46,7 +47,7 @@ export class ToolGuard {
                 eventStore.append({
                     type: 'SYSTEM_HOOK',
                     sourceAgentId: agentId,
-                    threadId: 'GLOBAL',
+                    threadId,
                     payload: { action: 'TOOL_GUARD_CHECK', toolName, args }
                 });
 

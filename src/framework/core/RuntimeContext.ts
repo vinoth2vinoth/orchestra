@@ -8,6 +8,7 @@ import { StateAdapter, globalStateAdapter } from './StateAdapter.ts';
 import { AgentRegistry, globalRegistry } from '../agents/AgentRegistry.ts';
 import { EventStore, globalEventStore } from './EventStore.ts';
 import { createMessageBus } from './MessageBusFactory.ts';
+import { globalMessageBus, type IMessageBus } from './MessageBus.ts';
 import { WorkflowCheckpointer, globalCheckpointer } from '../orchestration/Checkpointer.ts';
 import { StateStore, globalStateStore } from '../orchestration/StateStore.ts';
 import { EscalationManager, globalEscalationManager } from '../governance/EscalationManager.ts';
@@ -18,6 +19,7 @@ import { IAMInterceptor, globalIAMInterceptor } from '../security/IAMInterceptor
 export interface RuntimeServices {
     tenantId: string;
     stateAdapter: StateAdapter;
+    messageBus: IMessageBus;
     pluginRegistry: PluginRegistry;
     circuitBreakers: CircuitBreakerRegistry;
     queueBroker: QueueBroker;
@@ -45,9 +47,11 @@ function scopedKey(base: string, tenantId: string): string {
 export function createRuntimeContext(options: RuntimeContextOptions = {}): RuntimeServices {
     const tenantId = options.tenantId || 'GLOBAL';
     const stateAdapter = options.stateAdapter || globalStateAdapter;
-    const messageBus = options.stateAdapter && (!options.eventStore || !options.queueBroker)
-        ? createMessageBus()
-        : undefined;
+    const messageBus = options.messageBus || (
+        options.stateAdapter && (!options.eventStore || !options.queueBroker)
+            ? createMessageBus()
+            : globalMessageBus
+    );
     const eventStore = options.eventStore || (
         options.stateAdapter
             ? new EventStore({
@@ -110,6 +114,7 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
     return {
         tenantId,
         stateAdapter,
+        messageBus,
         pluginRegistry: options.pluginRegistry || globalPluginRegistry,
         circuitBreakers,
         queueBroker: options.queueBroker || (

@@ -294,7 +294,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                 }), async ({ block, content }) => {
                     this.memory.updateCoreMemory(this.card.id, block, content, true);
                     return `Successfully appended to ${block} core memory.`;
-                }, this.runtime.eventStore)
+                }, this.runtime.eventStore, threadId)
             } as any),
             core_memory_replace: tool({
                 description: 'Completely replace the contents of a Core Memory block (persona or human). Use with caution.',
@@ -308,7 +308,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                 }), async ({ block, content }) => {
                     this.memory.updateCoreMemory(this.card.id, block, content, false);
                     return `Successfully replaced ${block} core memory.`;
-                }, this.runtime.eventStore)
+                }, this.runtime.eventStore, threadId)
             } as any),
             archival_memory_search: tool({
                 description: 'Search the agent\'s archival semantic and procedural memory (vector search) for facts, past experiences, or rules.',
@@ -323,7 +323,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                     const results = await this.memory.searchSimilarMemories(query, topK);
                     if (results.length === 0) return "No matches found in archival memory.";
                     return `Found ${results.length} memories:\n` + results.map((r, i) => `${i+1}. [${r.tier}] ${r.content}`).join('\n');
-                }, this.runtime.eventStore)
+                }, this.runtime.eventStore, threadId)
             } as any),
             archival_memory_insert: tool({
                 description: 'Write a new fact, entity, or piece of knowledge into the archival semantic memory. Use this for info that doesn\'t need to be in core memory but should be remembered.',
@@ -338,7 +338,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                     const scrubbedContent = Sanitizer.scrubSecrets(content);
                     await this.memory.addSemanticMemory(scrubbedContent, entities);
                     return `Successfully saved to archival semantic memory. (Note: Content was scrubbed for secrets)`;
-                }, this.runtime.eventStore)
+                }, this.runtime.eventStore, threadId)
             } as any),
             write_to_local_blackboard: tool({
                 description: 'Write temporary state or data to your local blackboard before sharing it globally with the swarm. Values MUST be serializable strings.',
@@ -357,7 +357,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                         [args.key]: scrubbedValue
                     }));
                     return `Successfully wrote to local blackboard under key: ${args.key}`;
-                }, this.runtime.eventStore)
+                }, this.runtime.eventStore, threadId)
             } as any),
             requestHumanAssistance: tool({
                 description: 'Use this tool when you encounter significant uncertainty, a moral dilemma, or a high-risk operation that requires human verification before proceeding.',
@@ -377,7 +377,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                         { reason, detailedContext: context }
                     );
                     return `Human provided resolution: ${res.resolution}. Feedback: ${res.feedback || 'None'}`;
-                }, this.runtime.eventStore)
+                }, this.runtime.eventStore, threadId)
             } as any),
             requestMissingTool: tool({
                 description: 'Use this tool to pause your execution and ask the human or admin to provide a tool you need but is not available.',
@@ -414,7 +414,7 @@ ${Sanitizer.wrapSterile(coreMem.human, 'CORE_HUMAN')}
                         { requestedToolName, justification }
                     );
                     return `Human provided resolution: ${res.resolution}. Feedback: ${res.feedback || 'None'}`;
-                }, this.runtime.eventStore)
+                }, this.runtime.eventStore, threadId)
             } as any)
         };
 

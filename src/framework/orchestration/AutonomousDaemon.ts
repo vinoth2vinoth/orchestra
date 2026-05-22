@@ -1,9 +1,8 @@
-import { globalEventStore } from '../core/EventStore.ts';
 import { Orchestrator, WorkflowConfig } from './Orchestrator.ts';
 import { WorkerAgent } from '../agents/WorkerAgent.ts';
 import { MemoryMesh } from '../memory/MemoryMesh.ts';
-import { globalRegistry } from '../agents/AgentRegistry.ts';
 import { mutateProjectBoard } from '../tools/ProjectBoardStore.ts';
+import { RuntimeContextOptions, RuntimeServices, createRuntimeContext } from '../core/RuntimeContext.ts';
 import * as crypto from 'crypto';
 
 interface DaemonLease {
@@ -19,6 +18,7 @@ interface AutonomousDaemonOptions {
     heartbeatIntervalMs?: number;
     maxAttempts?: number;
     now?: () => number;
+    runtime?: RuntimeContextOptions;
 }
 
 interface ActiveDaemonTask {
@@ -31,7 +31,8 @@ export class AutonomousDaemon {
     private isRunning = false;
     private pollIntervalMs: number;
     private timer: NodeJS.Timeout | null = null;
-    private memory = new MemoryMesh();
+    private runtime: RuntimeServices;
+    private memory: MemoryMesh;
     private activeTasks = new Map<string, ActiveDaemonTask>();
     private readonly staleTaskMs: number;
     private readonly maxTaskRuntimeMs: number;
@@ -41,6 +42,12 @@ export class AutonomousDaemon {
 
     constructor(pollIntervalMs = 15000, options: AutonomousDaemonOptions = {}) {
         this.pollIntervalMs = pollIntervalMs;
+        this.runtime = createRuntimeContext(options.runtime || {});
+        this.memory = new MemoryMesh({
+            tenantId: this.runtime.tenantId,
+            stateAdapter: this.runtime.stateAdapter,
+            eventStore: this.runtime.eventStore
+        });
         this.staleTaskMs = options.staleTaskMs ?? this.parsePositiveNumber(process.env.ORCHESTRA_DAEMON_STALE_TASK_MS, 10 * 60 * 1000);
         this.maxTaskRuntimeMs = options.maxTaskRuntimeMs ?? this.parsePositiveNumber(process.env.ORCHESTRA_DAEMON_MAX_TASK_RUNTIME_MS, this.staleTaskMs);
         this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? this.parsePositiveNumber(process.env.ORCHESTRA_DAEMON_HEARTBEAT_INTERVAL_MS, Math.max(1000, Math.floor(this.staleTaskMs / 3)));
@@ -105,7 +112,7 @@ export class AutonomousDaemon {
                             task.status = 'BLOCKED';
                             task.description = this.appendDaemonNote(task.description, `Previous background run ${expiredRunId} expired. Max retry count reached.`);
                             delete task.daemonLease;
-                            globalEventStore.append({
+                            this.runtime.eventStore.append({
                                 type: 'SYSTEM_HOOK',
                                 sourceAgentId: 'AUTONOMOUS_DAEMON',
                                 threadId: 'SYSTEM',
@@ -117,7 +124,7 @@ export class AutonomousDaemon {
                         task.status = 'TODO';
                         task.description = this.appendDaemonNote(task.description, `Previous background run ${expiredRunId} expired and was returned to TODO for retry.`);
                         delete task.daemonLease;
-                        globalEventStore.append({
+                        this.runtime.eventStore.append({
                             type: 'SYSTEM_HOOK',
                             sourceAgentId: 'AUTONOMOUS_DAEMON',
                             threadId: 'SYSTEM',
@@ -140,7 +147,7 @@ export class AutonomousDaemon {
             }
 
             return root;
-        });
+        }, { stateAdapter: this.runtime.stateAdapter });
 
         for (const { project, task, lease } of tasksToStart) {
             this.launchBackgroundTask(project, task, lease);
@@ -148,7 +155,7 @@ export class AutonomousDaemon {
     }
 
     protected async executeSwarmTask(project: any, task: any) {
-        const orchestrator = new Orchestrator();
+        const orchestrator = new Orchestrator(this.runtime);
         const threadId = crypto.randomUUID();
 
         // Dynamically instantiate a temporary local agent for this exact daemon process
@@ -158,10 +165,15 @@ export class AutonomousDaemon {
             'WORKER',
             this.memory,
             { modelName: 'gemini-2.5-flash', apiKey: process.env.GEMINI_API_KEY || '' },
-            ['fileSystemRead', 'fileSystemWrite']
+            ['fileSystemRead', 'fileSystemWrite'],
+            undefined,
+            undefined,
+            undefined,
+            undefined,
+            this.runtime
         );
         
-        globalRegistry.register(worker1);
+        this.runtime.agentRegistry.register(worker1);
 
         const config: WorkflowConfig = {
             paradigm: 'SWARM',
@@ -171,7 +183,7 @@ export class AutonomousDaemon {
 
         const prompt = `Autonomous Background Task detected.\nProject: ${project.name}\nTask: ${task.title}\nDescription: ${task.description || 'None'}\n\nPlease take action. Update any files necessary to complete this task. Respond with a summary of what you did.`;
 
-        globalEventStore.append({
+        this.runtime.eventStore.append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'AUTONOMOUS_DAEMON',
             threadId,
@@ -181,7 +193,7 @@ export class AutonomousDaemon {
         try {
             return await orchestrator.executeWorkflow(prompt, config, threadId);
         } finally {
-            globalRegistry.unregister(worker1.card.id);
+            this.runtime.agentRegistry.unregister(worker1.card.id);
         }
     }
 
@@ -198,7 +210,7 @@ export class AutonomousDaemon {
                         if (t.id === taskId) {
                             if (t.daemonLease?.runId !== runId) {
                                 ignoredAsStale = true;
-                                globalEventStore.append({
+                                this.runtime.eventStore.append({
                                     type: 'SYSTEM_HOOK',
                                     sourceAgentId: 'AUTONOMOUS_DAEMON',
                                     threadId: 'SYSTEM',
@@ -218,7 +230,7 @@ export class AutonomousDaemon {
             }
 
             return root;
-        });
+        }, { stateAdapter: this.runtime.stateAdapter });
 
         if (finalized) {
             console.log(`[AutonomousDaemon] Finalized task ${taskId}`);
@@ -268,7 +280,7 @@ export class AutonomousDaemon {
                     if (task.id !== taskId || task.daemonLease?.runId !== runId) continue;
                     task.daemonLease.lastHeartbeatAt = now;
                     task.daemonLease.expiresAt = now + this.staleTaskMs;
-                    globalEventStore.append({
+                    this.runtime.eventStore.append({
                         type: 'SYSTEM_HOOK',
                         sourceAgentId: 'AUTONOMOUS_DAEMON',
                         threadId: 'SYSTEM',
@@ -277,7 +289,7 @@ export class AutonomousDaemon {
                 }
             }
             return root;
-        });
+        }, { stateAdapter: this.runtime.stateAdapter });
     }
 
     private async timeoutActiveTask(projectId: string, taskId: string, runId: string) {
@@ -288,7 +300,7 @@ export class AutonomousDaemon {
         this.clearActiveTask(key, runId);
         console.warn(`[AutonomousDaemon] Background task ${taskId} timed out after ${this.maxTaskRuntimeMs}ms`);
         await this.finalizeTask(projectId, taskId, runId, `Timed out after ${this.maxTaskRuntimeMs}ms`, true);
-        globalEventStore.append({
+        this.runtime.eventStore.append({
             type: 'SYSTEM_HOOK',
             sourceAgentId: 'AUTONOMOUS_DAEMON',
             threadId: 'SYSTEM',

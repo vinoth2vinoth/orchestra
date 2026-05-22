@@ -5,6 +5,7 @@ import { globalQueueBroker } from '../src/framework/orchestration/QueueBroker.ts
 import { BaseAgent } from '../src/framework/agents/BaseAgent.ts';
 import { AgentRegistry, globalRegistry } from '../src/framework/agents/AgentRegistry.ts';
 import { MemoryMesh } from '../src/framework/memory/MemoryMesh.ts';
+import { LocalMessageBus, globalMessageBus } from '../src/framework/core/MessageBus.ts';
 import type { LLMConfig } from '../src/framework/llm/ProviderRegistry.ts';
 
 function assert(condition: unknown, message: string) {
@@ -265,6 +266,42 @@ async function testWorkerClusterPassesScopedServicesToWorkers() {
   }
 }
 
+async function testWorkerNodeHeartbeatsUseScopedMessageBus() {
+  const scopedBus = new LocalMessageBus();
+  const scopedQueue = new QueueBroker({
+    visibilityTimeoutMs: 100,
+    defaultMaxAttempts: 2,
+    messageBus: scopedBus
+  });
+  const nodeId = `scoped-heartbeat-node-${Date.now()}`;
+  const worker = new WorkerNode(nodeId, {
+    queueBroker: scopedQueue,
+    messageBus: scopedBus,
+    agentRegistry: new AgentRegistry()
+  });
+  let scopedHeartbeats = 0;
+  let globalHeartbeats = 0;
+  const unsubscribeScoped = await scopedBus.subscribe('WORKER_HEARTBEATS', (msg: any) => {
+    if (msg.nodeId === nodeId) scopedHeartbeats++;
+  });
+  const unsubscribeGlobal = await globalMessageBus.subscribe('WORKER_HEARTBEATS', (msg: any) => {
+    if (msg.nodeId === nodeId) globalHeartbeats++;
+  });
+
+  try {
+    worker.start();
+    await new Promise(resolve => setTimeout(resolve, 2200));
+
+    assert(scopedHeartbeats > 0, 'Expected worker heartbeat on scoped message bus');
+    assert(globalHeartbeats === 0, `Expected no worker heartbeat on global message bus, got ${globalHeartbeats}`);
+  } finally {
+    worker.stop();
+    unsubscribeScoped();
+    unsubscribeGlobal();
+    scopedQueue.dispose();
+  }
+}
+
 const tests = [
   ['queue retry then success', testRetryThenSuccess],
   ['queue dead letter after max attempts', testDeadLetterAfterMaxAttempts],
@@ -273,7 +310,8 @@ const tests = [
   ['worker node can restart with same id', testWorkerNodeCanRestartWithSameId],
   ['worker cluster stops all workers', testWorkerClusterStopsAllWorkers],
   ['worker node uses scoped queue and registry', testWorkerNodeUsesScopedQueueAndRegistry],
-  ['worker cluster passes scoped services to workers', testWorkerClusterPassesScopedServicesToWorkers]
+  ['worker cluster passes scoped services to workers', testWorkerClusterPassesScopedServicesToWorkers],
+  ['worker node heartbeats use scoped message bus', testWorkerNodeHeartbeatsUseScopedMessageBus]
 ] as const;
 
 const results = [];

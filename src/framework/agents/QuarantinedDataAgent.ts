@@ -2,7 +2,7 @@ import { BaseAgent } from './BaseAgent.ts';
 import { MemoryMesh } from '../memory/MemoryMesh.ts';
 import { LLMConfig } from '../llm/ProviderRegistry.ts';
 import { CaMeLSandbox } from '../security/CaMeLSandbox.ts';
-import { RuntimeContextOptions } from '../core/RuntimeContext.ts';
+import { RuntimeContextOptions, RuntimeServices } from '../core/RuntimeContext.ts';
 
 export class QuarantinedDataAgent extends BaseAgent {
     private sandbox: CaMeLSandbox;
@@ -18,8 +18,13 @@ export class QuarantinedDataAgent extends BaseAgent {
     ) {
         super(name, systemInstruction, 'WORKER', memory, privilegedConfig, [], undefined, undefined, undefined, undefined, runtime);
         this.systemInstruction = systemInstruction;
-        this.sandbox = new CaMeLSandbox(privilegedConfig, quarantinedConfig);
+        this.sandbox = new CaMeLSandbox(privilegedConfig, quarantinedConfig, this.runtime.eventStore);
         this.card.capabilities = []; // Q-LLM has NO TOOLS explicitly.
+    }
+
+    public override setRuntimeContext(runtime: RuntimeServices | RuntimeContextOptions) {
+        super.setRuntimeContext(runtime);
+        this.sandbox.setEventStore(this.runtime.eventStore);
     }
 
     public async execute(untrustedData: any, threadId: string): Promise<any> {

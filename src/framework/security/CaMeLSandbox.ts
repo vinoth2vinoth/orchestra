@@ -1,5 +1,5 @@
 import { LLMConfig, ProviderRegistry } from '../llm/ProviderRegistry.ts';
-import { globalEventStore } from '../core/EventStore.ts';
+import { EventStore, globalEventStore } from '../core/EventStore.ts';
 
 /**
  * Implements the CaMeL (Control vs Data Flow) Dual-LLM Structural Separation.
@@ -8,11 +8,17 @@ import { globalEventStore } from '../core/EventStore.ts';
 export class CaMeLSandbox {
     private privilegedConfig: LLMConfig;
     private quarantinedConfig: LLMConfig;
+    private eventStore: EventStore;
 
-    constructor(privilegedConfig: LLMConfig, quarantinedConfig: LLMConfig) {
+    constructor(privilegedConfig: LLMConfig, quarantinedConfig: LLMConfig, eventStore: EventStore = globalEventStore) {
         this.privilegedConfig = privilegedConfig;
         // The quarantined config might be a smaller/faster model or local model
         this.quarantinedConfig = quarantinedConfig;
+        this.eventStore = eventStore;
+    }
+
+    public setEventStore(eventStore: EventStore) {
+        this.eventStore = eventStore;
     }
 
     /**
@@ -26,7 +32,7 @@ export class CaMeLSandbox {
         messages: any[],
         tools?: any
     ) {
-        globalEventStore.append({
+        this.eventStore.append({
             type: 'LLM_GENERATION_STARTED',
             sourceAgentId: 'P-LLM',
             threadId,
@@ -40,7 +46,7 @@ export class CaMeLSandbox {
             tools
         );
 
-        globalEventStore.append({
+        this.eventStore.append({
             type: 'LLM_GENERATION_COMPLETED',
             sourceAgentId: 'P-LLM',
             threadId,
@@ -61,7 +67,7 @@ export class CaMeLSandbox {
         untrustedData: string,
         extractionPrompt: string
     ) {
-        globalEventStore.append({
+        this.eventStore.append({
             type: 'LLM_GENERATION_STARTED',
             sourceAgentId: 'Q-LLM',
             threadId,
@@ -79,7 +85,7 @@ export class CaMeLSandbox {
             messages
         );
 
-        globalEventStore.append({
+        this.eventStore.append({
             type: 'LLM_GENERATION_COMPLETED',
             sourceAgentId: 'Q-LLM',
             threadId,

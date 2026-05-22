@@ -40,13 +40,11 @@ export class WorkerNode {
                     timestamp: Date.now()
                 }
             });
-            // We also publish to message bus for the health monitor
-            import('../core/MessageBus.ts').then(({ globalMessageBus }) => {
-                globalMessageBus.publish('WORKER_HEARTBEATS', {
-                    nodeId: this.nodeId,
-                    activeTaskId: this.activeTaskId,
-                    timestamp: Date.now()
-                });
+            // We also publish to the scoped message bus for the health monitor.
+            this.runtime.messageBus.publish('WORKER_HEARTBEATS', {
+                nodeId: this.nodeId,
+                activeTaskId: this.activeTaskId,
+                timestamp: Date.now()
             }).catch(console.error);
         }, 2000);
         
