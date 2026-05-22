@@ -146,11 +146,78 @@ async function testFallbackProviderAfterNativeRestFailure() {
   }
 }
 
+async function testStreamNativeRestFailureDoesNotReturnSimulation() {
+  const mock = installFetchMock(() => {
+    return jsonResponse({ error: 'quota exceeded' }, false, 429);
+  });
+
+  try {
+    try {
+      await ProviderRegistry.generateStream({
+        provider: 'openai',
+        apiKey: 'primary-key',
+        baseURL: 'http://primary-compatible.test/v1',
+        modelName: 'primary-model',
+        useNativeREST: true,
+        disableSummarization: true
+      }, 'system rules', [{ role: 'user', content: 'hello' }]);
+    } catch (err: any) {
+      assert(!String(err.message).includes('HYBRID_SIMULATION'), `Provider failure returned simulation text: ${err.message}`);
+      assert(String(err.message).includes('429'), `Expected clear provider failure, got ${err.message}`);
+      return;
+    }
+    throw new Error('Expected streaming provider failure to throw without simulation fallback.');
+  } finally {
+    mock.restore();
+  }
+}
+
+async function testStreamNativeRestUsesRealFallback() {
+  let calls = 0;
+  const mock = installFetchMock(() => {
+    calls++;
+    if (calls === 1) {
+      return jsonResponse({ error: 'quota exceeded' }, false, 429);
+    }
+    return jsonResponse({
+      choices: [{ message: { content: 'fallback stream response' } }],
+      usage: { prompt_tokens: 3, completion_tokens: 4, total_tokens: 7 }
+    });
+  });
+
+  try {
+    const stream = await ProviderRegistry.generateStream({
+      provider: 'openai',
+      apiKey: 'primary-key',
+      baseURL: 'http://primary-compatible.test/v1',
+      modelName: 'primary-model',
+      useNativeREST: true,
+      disableSummarization: true,
+      fallbackConfig: {
+        provider: 'openai',
+        apiKey: 'fallback-key',
+        baseURL: 'http://fallback-compatible.test/v1',
+        modelName: 'fallback-model',
+        useNativeREST: true,
+        disableSummarization: true
+      }
+    }, 'system rules', [{ role: 'user', content: 'hello' }]);
+
+    assert(calls === 2, `Expected primary plus fallback stream calls, got ${calls}`);
+    assert(mock.calls[1].url === 'http://fallback-compatible.test/v1/chat/completions', `Expected fallback stream URL, got ${mock.calls[1].url}`);
+    assert(await stream.text === 'fallback stream response', 'Expected real fallback stream text');
+  } finally {
+    mock.restore();
+  }
+}
+
 const tests = [
   ['explicit provider bypasses key guessing', testExplicitProviderBypassesKeyGuessing],
   ['OpenAI-compatible native REST contract', testOpenAiCompatibleNativeRestContract],
   ['Gemini native REST contract', testGeminiNativeRestContract],
-  ['fallback provider after native REST failure', testFallbackProviderAfterNativeRestFailure]
+  ['fallback provider after native REST failure', testFallbackProviderAfterNativeRestFailure],
+  ['stream native REST failure does not return simulation', testStreamNativeRestFailureDoesNotReturnSimulation],
+  ['stream native REST uses real fallback', testStreamNativeRestUsesRealFallback]
 ] as const;
 
 const results: Array<{ name: string; ok: boolean; ms: number; error?: string; stack?: string }> = [];

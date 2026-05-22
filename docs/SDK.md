@@ -136,6 +136,8 @@ The key-value adapter uses the Redis-compatible protocol and is tested with Valk
 
 `LLMConfig.provider` lets callers choose the provider instead of relying on API-key guessing. Use `baseURL` with `provider: 'openai'` for OpenAI-compatible local or hosted gateways.
 
+Provider failures should be honest. Configure `fallbackConfig` when you want Orchestra to try a second real provider. Simulation fallback is off by default; set `allowSimulationFallback: true` only for demos or deterministic tests where fake output is acceptable.
+
 ```typescript
 import { ProviderRegistry, type LLMConfig } from '../src/framework/index.ts';
 

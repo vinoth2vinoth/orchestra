@@ -29,6 +29,7 @@ export interface LLMConfig {
     tier?: ModelTier; 
     fallbackConfig?: LLMConfig; // If a request fails (e.g. 429), try this next config
     useNativeREST?: boolean; // Bypass Vercel SDK and use pure industry standard fetch
+    allowSimulationFallback?: boolean; // Explicit opt-in for demo/test fallback when no real provider can answer.
 }
 
 import { SimulationManager } from '../core/SimulationManager.ts';
@@ -608,30 +609,19 @@ export class ProviderRegistry {
                                error.statusCode === 429 ||
                                error.name === 'RetryError';
 
-            if (isQuotaError) {
-                 console.warn(`Quota exceeded in stream, returning resilient mocked stream.`);
-                 const mockText = `[HYBRID_SIMULATION]: Orchestra is finalizing the architecture for the decentralized power grid. In a HIERARCHICAL paradigm, the Manager coordinates Worker agents to optimize node distribution. Simulation active due to current API limit (20/day) being reached.`;
-                 return {
-                     textStream: (async function* () { 
-                         const words = mockText.split(' ');
-                         for (const word of words) {
-                             yield word + ' ';
-                             await new Promise(r => setTimeout(r, 20));
-                         }
-                     })(),
-                     text: Promise.resolve(mockText),
-                     toolCalls: Promise.resolve([]),
-                     toolResults: Promise.resolve([]),
-                     usage: Promise.resolve({ promptTokens: 0, completionTokens: 0, totalTokens: 0 }),
-                     finishReason: Promise.resolve('stop')
-                 };
-            }
             if (config.fallbackConfig) {
                 console.warn(`Primary LLM stream failed: ${error.message}. Failing over to fallback...`);
-                return this.generateStream(config.fallbackConfig, systemPrompt, messages, tools);
+                return this.generateStream(config.fallbackConfig, systemPrompt, finalMessages, tools);
+            }
+            if (isQuotaError && config.allowSimulationFallback === true) {
+                console.warn(`Quota exceeded in stream. Returning explicit simulation fallback because allowSimulationFallback=true.`);
+                return this.generateSimulatedStream(finalMessages);
+            }
+            if (isQuotaError) {
+                throw new Error(`LLM stream failed due to quota or rate limit and no real fallback provider is configured. Set fallbackConfig for a real provider fallback, or set allowSimulationFallback=true only for demos/tests. Original error: ${error.message}`);
             }
             
-            console.warn(`Attempting native REST fallback due to SDK failure (wrapping in mock stream)...`);
+            console.warn(`Attempting native REST fallback due to SDK failure...`);
             try {
                 const res = await this.generateNativeREST(config, systemPrompt, messages, tools);
                 return {
