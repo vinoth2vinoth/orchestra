@@ -1,12 +1,15 @@
-import { randomBytes } from 'crypto';
+export interface SecretStore {
+    getSecret(tenantId: string, key: string): string | undefined;
+}
 
 /**
  * SecretVault
  * 
- * Simulated enterprise secret management (like HashiCorp Vault, AWS Secrets Manager, or GCP Secret Manager).
+ * In-memory secret management for local development and tests.
  * Keeps secrets strictly isolated by tenantId. Agents never see the raw secrets.
+ * Production deployments should wrap this behind a runtime-scoped secret service.
  */
-export class SecretVault {
+export class SecretVault implements SecretStore {
     // Map<tenantId, Map<secretKey, secretValue>>
     private vaults: Map<string, Map<string, string>> = new Map();
 

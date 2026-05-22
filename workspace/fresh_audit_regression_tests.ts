@@ -6,6 +6,7 @@ import {
   Orchestrator,
   PluginRegistry,
   ProviderRegistry,
+  SecretVault,
   ToolRegistry,
   WorkerPool
 } from '../src/framework/index.ts';
@@ -66,7 +67,7 @@ class ToolCallingAgent extends EchoAgent {
   }
 }
 
-function createRuntime(pluginRegistry?: PluginRegistry, toolRegistry?: ToolRegistry, iamInterceptor?: IAMInterceptor) {
+function createRuntime(pluginRegistry?: PluginRegistry, toolRegistry?: ToolRegistry, iamInterceptor?: IAMInterceptor, secretVault?: SecretVault) {
   const stateAdapter = new MemoryStateAdapter();
   const eventStore = new EventStore({
     stateAdapter,
@@ -87,6 +88,7 @@ function createRuntime(pluginRegistry?: PluginRegistry, toolRegistry?: ToolRegis
     escalationManager: new EscalationManager(eventStore),
     genealogy: new GenealogyTracker(eventStore),
     toolRegistry,
+    secretVault,
     iamInterceptor
   };
 }
@@ -270,7 +272,8 @@ async function testToolRegistryUsesScopedIamInterceptor() {
     { capabilities: ['audit_tool'] }
   );
 
-  const iamInterceptor = new IAMInterceptor();
+  const secretVault = new SecretVault();
+  const iamInterceptor = new IAMInterceptor({ secretVault });
   iamInterceptor.registerPolicy({
     tenantId: 'tenant-scoped-iam',
     allowedTools: ['auditTool'],
@@ -278,9 +281,10 @@ async function testToolRegistryUsesScopedIamInterceptor() {
   });
 
   const { globalSecretVault } = await import('../src/framework/security/SecretVault.ts');
-  globalSecretVault.setSecret('tenant-scoped-iam', 'auditSecret', 'SCOPED_SECRET');
+  globalSecretVault.setSecret('tenant-scoped-iam', 'auditSecret', 'GLOBAL_SECRET_SHOULD_NOT_LEAK');
+  secretVault.setSecret('tenant-scoped-iam', 'auditSecret', 'SCOPED_SECRET');
 
-  const runtime = createRuntime(undefined, toolRegistry, iamInterceptor);
+  const runtime = createRuntime(undefined, toolRegistry, iamInterceptor, secretVault);
   try {
     const result = await new Orchestrator(runtime).executeWorkflow(
       'call scoped tool',

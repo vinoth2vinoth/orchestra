@@ -40,6 +40,8 @@ export { Sanitizer } from './security/Sanitizer.ts';
 export { createApiAuthMiddleware } from './security/ApiAuth.ts';
 export { IAMInterceptor, globalIAMInterceptor } from './security/IAMInterceptor.ts';
 export type { SecurityPolicy, ToolInvocationContext } from './security/IAMInterceptor.ts';
+export { SecretVault, globalSecretVault } from './security/SecretVault.ts';
+export type { SecretStore } from './security/SecretVault.ts';
 export { AgentFrameworkError, ConfigurationError } from './core/ErrorHandler.ts';
 export type { ErrorContext } from './core/ErrorHandler.ts';
 export { ProviderRegistry } from './llm/ProviderRegistry.ts';

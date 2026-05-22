@@ -116,6 +116,30 @@ const orchestrator = new Orchestrator({
 
 This keeps live integrations replaceable. Use `ORCHESTRA_TOOL_WEBSEARCH_MODE=live`, `ORCHESTRA_TOOL_DATABASEQUERY_MODE=live`, or `ORCHESTRA_TOOL_RAGSEARCH_MODE=live` only after registering the matching provider.
 
+## Scope Secrets Per Runtime
+
+Use a runtime-scoped `SecretStore` when tools need secrets. `SecretVault` is the in-memory local implementation; scoped stores keep tests, tenants, and AI Agent workflows from relying on shared secret state.
+
+```typescript
+import { IAMInterceptor, SecretVault, createRuntimeContext } from '../src/framework/index.ts';
+
+const secretVault = new SecretVault();
+secretVault.setSecret('tenant-a', 'searchApiKey', process.env.SEARCH_API_KEY!);
+
+const iamInterceptor = new IAMInterceptor({ secretVault });
+iamInterceptor.registerPolicy({
+  tenantId: 'tenant-a',
+  allowedTools: ['webSearch'],
+  requiredSecrets: { webSearch: ['searchApiKey'] }
+});
+
+const runtime = createRuntimeContext({
+  tenantId: 'tenant-a',
+  secretVault,
+  iamInterceptor
+});
+```
+
 ## Swap State Backends
 
 Use the `StateAdapter` contract when you need durable or distributed state. The default is in-memory for local development.

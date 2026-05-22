@@ -16,6 +16,7 @@ import { GenealogyTracker, globalGenealogy } from '../governance/GenealogyTracke
 import { ToolRegistry, globalToolRegistry } from '../tools/ToolRegistry.ts';
 import { IAMInterceptor, globalIAMInterceptor } from '../security/IAMInterceptor.ts';
 import { ToolProviderRegistry, globalToolProviders } from '../tools/ToolProviders.ts';
+import { globalSecretVault, type SecretStore } from '../security/SecretVault.ts';
 
 export interface RuntimeServices {
     tenantId: string;
@@ -35,6 +36,7 @@ export interface RuntimeServices {
     genealogy: GenealogyTracker;
     toolRegistry: ToolRegistry;
     toolProviders: ToolProviderRegistry;
+    secretVault: SecretStore;
     iamInterceptor: IAMInterceptor;
 }
 
@@ -66,6 +68,7 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
     );
     const hasScopedEventStore = Boolean(options.eventStore || options.stateAdapter);
     const toolRegistry = options.toolRegistry || globalToolRegistry;
+    const secretVault = options.secretVault || globalSecretVault;
     const auditLog = options.auditLog || globalAuditLog;
     const needsScopedRegistry = Boolean(
         options.tenantId ||
@@ -81,6 +84,7 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         options.stateStore ||
         options.toolRegistry ||
         options.toolProviders ||
+        options.secretVault ||
         options.iamInterceptor ||
         options.escalationManager ||
         options.genealogy
@@ -140,7 +144,10 @@ export function createRuntimeContext(options: RuntimeContextOptions = {}): Runti
         genealogy,
         toolRegistry,
         toolProviders: options.toolProviders || globalToolProviders,
-        iamInterceptor: options.iamInterceptor || globalIAMInterceptor
+        secretVault,
+        iamInterceptor: options.iamInterceptor || (
+            options.secretVault ? new IAMInterceptor({ secretVault }) : globalIAMInterceptor
+        )
     };
 }
 

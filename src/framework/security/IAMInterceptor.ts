@@ -1,4 +1,4 @@
-import { globalSecretVault } from './SecretVault.ts';
+import { globalSecretVault, type SecretStore } from './SecretVault.ts';
 
 export interface ToolInvocationContext {
     tenantId: string;
@@ -21,6 +21,11 @@ export interface SecurityPolicy {
  */
 export class IAMInterceptor {
     private policies: Map<string, SecurityPolicy> = new Map();
+    private secretVault: SecretStore;
+
+    constructor(options: { secretVault?: SecretStore } = {}) {
+        this.secretVault = options.secretVault || globalSecretVault;
+    }
 
     public registerPolicy(policy: SecurityPolicy) {
         this.policies.set(policy.tenantId, policy);
@@ -48,7 +53,7 @@ export class IAMInterceptor {
         // Inject secrets if required by the tool for this tenant
         const requiredSecrets = policy.requiredSecrets[toolName] || [];
         for (const secretKey of requiredSecrets) {
-            const secretValue = globalSecretVault.getSecret(context.tenantId, secretKey);
+            const secretValue = this.secretVault.getSecret(context.tenantId, secretKey);
             
             if (!secretValue) {
                 throw new Error(`[IAM Error] Required secret '${secretKey}' not found in vault for tenant ${context.tenantId}`);
