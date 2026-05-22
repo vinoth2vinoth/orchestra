@@ -48,10 +48,19 @@ globalToolRegistry.register(
             if (!task) throw new Error(`[Project Error]: Task ${taskId} not found in project ${projectId}.`);
 
             oldStatus = task.status;
+            if (oldStatus === normalizedStatus) {
+                changedTask = task;
+                return data;
+            }
+
             task.status = normalizedStatus;
             changedTask = task;
             return data;
         }, { stateAdapter });
+
+        if (oldStatus === normalizedStatus) {
+            return `Task "${changedTask.title}" is already ${normalizedStatus}.`;
+        }
 
         eventStore.append({
             type: 'TELEMETRY_EMIT',
@@ -84,10 +93,21 @@ globalToolRegistry.register(
     async ({ projectId, title, description, assignee, priority = 'medium' }, context) => {
         const eventStore = context.runtime?.eventStore || globalEventStore;
         const stateAdapter = context.runtime?.stateAdapter;
+        const idempotencyKey = context.idempotencyKey;
         let newTask: any = null;
+        let reusedExistingTask = false;
         await mutateProjectBoard((data) => {
             const project = data.projects.find((p: any) => p.id === projectId);
             if (!project) throw new Error(`[Project Error]: Project ${projectId} not found.`);
+
+            if (idempotencyKey) {
+                const existingTask = project.tasks.find((t: any) => t.orchestraIdempotencyKey === idempotencyKey);
+                if (existingTask) {
+                    newTask = existingTask;
+                    reusedExistingTask = true;
+                    return data;
+                }
+            }
 
             newTask = {
                 id: `t${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
@@ -96,12 +116,17 @@ globalToolRegistry.register(
                 status: 'TODO',
                 assignee,
                 priority: priority.toUpperCase(),
-                createdAt: new Date().toISOString()
+                createdAt: new Date().toISOString(),
+                ...(idempotencyKey ? { orchestraIdempotencyKey: idempotencyKey } : {})
             };
 
             project.tasks.push(newTask);
             return data;
         }, { stateAdapter });
+
+        if (reusedExistingTask) {
+            return `Task "${newTask.title}" already exists from a previous attempt (ID: ${newTask.id}).`;
+        }
 
         eventStore.append({
             type: 'TELEMETRY_EMIT',

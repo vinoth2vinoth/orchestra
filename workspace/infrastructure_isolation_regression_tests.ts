@@ -264,6 +264,18 @@ async function testProjectBoardToolUsesScopedRuntimeServices() {
       agentId: 'project-tool-agent',
       threadId,
       capabilities: [],
+      idempotencyKey: 'project-tool-scope:create-task:scoped-task',
+      runtime
+    }, () => globalToolRegistry.getAllTools().createProjectTask.execute({
+      projectId: 'project-tool-scope',
+      title: 'Scoped task'
+    }));
+    const retryResult = await runWithContext({
+      tenantId,
+      agentId: 'project-tool-agent',
+      threadId,
+      capabilities: [],
+      idempotencyKey: 'project-tool-scope:create-task:scoped-task',
       runtime
     }, () => globalToolRegistry.getAllTools().createProjectTask.execute({
       projectId: 'project-tool-scope',
@@ -271,9 +283,15 @@ async function testProjectBoardToolUsesScopedRuntimeServices() {
     }));
 
     assert(String(result).includes('Scoped task'), `Project board tool returned wrong result: ${JSON.stringify(result)}`);
+    assert(String(retryResult).includes('already exists'), `Project board retry should reuse existing task, got: ${JSON.stringify(retryResult)}`);
+    const board = JSON.parse(fs.readFileSync(projectPath, 'utf8'));
+    const scopedTasks = board.projects[0].tasks.filter((task: any) => task.title === 'Scoped task');
+    assert(scopedTasks.length === 1, `Idempotent project task retry should not create duplicates: ${JSON.stringify(scopedTasks)}`);
+    assert(scopedTasks[0].orchestraIdempotencyKey === 'project-tool-scope:create-task:scoped-task', `Task should retain idempotency key: ${JSON.stringify(scopedTasks[0])}`);
     const events = eventStore.getEventsByThread(threadId);
     assert(events.some(event => event.type === 'TOOL_CALL_REQUESTED' && event.sourceAgentId === 'project-tool-agent'), `Project board tool request did not use scoped event store: ${JSON.stringify(events)}`);
     assert(events.some(event => event.type === 'TELEMETRY_EMIT' && event.payload.action === 'TASK_CREATED'), `Project board telemetry did not use scoped event store: ${JSON.stringify(events)}`);
+    assert(events.filter(event => event.type === 'TELEMETRY_EMIT' && event.payload.action === 'TASK_CREATED').length === 1, `Idempotent retry should not emit duplicate create telemetry: ${JSON.stringify(events)}`);
   } finally {
     eventStore.dispose();
     if (hadOriginal) {
