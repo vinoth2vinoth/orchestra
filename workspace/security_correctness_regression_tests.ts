@@ -33,6 +33,32 @@ async function testToolTraversalBlocked() {
   }
 }
 
+async function testFileSystemWriteIsAtomicAndRepeatable() {
+  globalIAMInterceptor.registerPolicy({
+    tenantId: 'GLOBAL',
+    allowedTools: ['fileSystemWrite'],
+    requiredSecrets: {},
+  });
+
+  const tools = globalToolRegistry.getAllTools();
+  const relativePath = `atomic-write-${Date.now()}/output.txt`;
+  const absolutePath = path.join(process.cwd(), 'workspace', relativePath);
+  const dir = path.dirname(absolutePath);
+  try {
+    const first = await tools.fileSystemWrite.execute({ filePath: relativePath, content: 'first version' });
+    const second = await tools.fileSystemWrite.execute({ filePath: relativePath, content: 'second version' });
+
+    assert(String(first).includes('Successfully wrote'), `Unexpected first write result: ${first}`);
+    assert(String(second).includes('Successfully wrote'), `Unexpected second write result: ${second}`);
+    assert(fs.readFileSync(absolutePath, 'utf8') === 'second version', 'Expected final file content from last complete write');
+
+    const tempFiles = fs.readdirSync(dir).filter(name => name.endsWith('.tmp'));
+    assert(tempFiles.length === 0, `Atomic writer left temp files behind: ${tempFiles.join(', ')}`);
+  } finally {
+    if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testStorageTraversalBlocked() {
   const baseDir = fs.mkdtempSync(path.join(process.cwd(), 'workspace', 'storage-regression-'));
   const storage = new StorageMesh(baseDir);
@@ -134,6 +160,7 @@ async function testApiAuthMiddleware() {
 async function main() {
   const tests = [
     ['tool traversal blocked', testToolTraversalBlocked],
+    ['file system write is atomic and repeatable', testFileSystemWriteIsAtomicAndRepeatable],
     ['api auth middleware', testApiAuthMiddleware],
     ['storage traversal blocked', testStorageTraversalBlocked],
     ['atomic state mutation', testAtomicStateMutation],

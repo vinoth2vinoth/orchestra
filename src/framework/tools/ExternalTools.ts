@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { globalToolRegistry } from './ToolRegistry.ts';
@@ -63,6 +64,32 @@ const safeResolveWorkspacePath = (userPath: string): string | null => {
         return null;
     }
     return targetPath;
+};
+
+const writeFileAtomically = (absolutePath: string, content: string): void => {
+    const dir = path.dirname(absolutePath);
+    if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+    }
+
+    const tempPath = `${absolutePath}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
+    fs.writeFileSync(tempPath, content, 'utf8');
+    try {
+        fs.renameSync(tempPath, absolutePath);
+    } catch (err: any) {
+        if (process.platform === 'win32' && (err.code === 'EPERM' || err.code === 'EEXIST')) {
+            fs.rmSync(absolutePath, { force: true });
+            try {
+                fs.renameSync(tempPath, absolutePath);
+                return;
+            } catch (retryErr) {
+                fs.rmSync(tempPath, { force: true });
+                throw retryErr;
+            }
+        }
+        fs.rmSync(tempPath, { force: true });
+        throw err;
+    }
 };
 
 // 1. Web Search Tool
@@ -190,13 +217,7 @@ globalToolRegistry.register(
             return `[File System Error]: Access denied to ${filePath}. Path must be within workspace.`;
         }
         
-        // Ensure directory exists
-        const dir = path.dirname(absolutePath);
-        if (!fs.existsSync(dir)) {
-             fs.mkdirSync(dir, { recursive: true });
-        }
-        
-        fs.writeFileSync(absolutePath, content || '', 'utf8');
+        writeFileAtomically(absolutePath, content || '');
         return `Successfully wrote ${content.length} characters to ${filePath}.`;
     }
 );
